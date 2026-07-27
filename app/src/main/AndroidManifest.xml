@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application
+        android:name=".app.DrawerApplication"
+        android:allowBackup="true"
+        android:icon="@android:drawable/sym_def_app_icon"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.SpatialApp">
+
+        <activity
+            android:name=".app.LaunchActivity"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:theme="@style/Theme.SpatialApp">
+
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <meta-data
+                android:name="pico.spatial.stage.id"
+                android:value="DefaultStage" />
+            <meta-data
+                android:name="pico.spatial.stage.style"
+                android:value="1" />
+            <meta-data
+                android:name="pico.spatial.stage.upperlimb"
+                android:value="1" />
+        </activity>
+    </application>
+
+</manifest>
