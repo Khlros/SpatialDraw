@@ -1,5 +1,6 @@
 package com.example.myspatial.ui
 
+import android.os.SystemClock
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.width
@@ -14,10 +15,14 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.PointerId
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.pico.spatial.core.container.SpatialViewContent
 import com.pico.spatial.core.ecs.BoundingBox
@@ -42,6 +47,9 @@ import com.pico.spatial.ui.design.Button
 import com.pico.spatial.ui.design.PicoTheme
 import com.pico.spatial.ui.design.Text
 import com.pico.spatial.ui.foundation.content.SpatialView
+import com.pico.spatial.ui.foundation.gesture.SpatialPointerInfo
+import com.pico.spatial.ui.foundation.gesture.data.InteractionKind
+import com.pico.spatial.ui.foundation.gesture.detectSpatialPointerEvent
 import kotlin.math.PI
 import kotlin.math.acos
 import kotlin.math.abs
@@ -51,9 +59,11 @@ import kotlin.math.sqrt
 
 @Composable
 fun DrawerHomeScreen(modifier: Modifier = Modifier) {
+    val context = LocalContext.current
     val handTrackingProvider = remember { HandTrackingProvider() }
     val handTrackingData by
         handTrackingProvider.dataFlow.collectAsState(initial = HandTrackingData(null, null, 0L))
+    val latestHandTrackingData = rememberUpdatedState(handTrackingData)
     val paintScene = remember { PaintSceneState() }
     var selectedColor by remember { mutableStateOf(BrushColorPreset.Coral) }
     var selectedSize by remember { mutableStateOf(BrushSizePreset.Medium) }
@@ -79,7 +89,18 @@ fun DrawerHomeScreen(modifier: Modifier = Modifier) {
                 .background(Color(0x10000000)),
     ) {
         SpatialView(
-            modifier = Modifier.fillMaxSize(),
+            modifier =
+                Modifier
+                    .fillMaxSize()
+                    .pointerInput(Unit) {
+                        detectSpatialPointerEvent(context = context) { eventList ->
+                            paintScene.handlePointerEvents(
+                                eventList = eventList,
+                                handTrackingData = latestHandTrackingData.value,
+                            )
+                            false
+                        }
+                    },
             initial = { content, attachments ->
                 paintScene.attach(content)
                 attachments.entity(CONTROL_PANEL_ATTACHMENT_ID)?.let { panel ->
@@ -134,7 +155,7 @@ private fun BrushControlPanel(
     ) {
         Text(text = "Brush Panel", style = PicoTheme.typography.titleLarge)
         Text(
-            text = "面板固定在你前方偏右，可以直接切颜色、粗细和笔迹模式。",
+            text = "短 pinch 用来点面板，长 pinch 才会开始绘画。",
             style = PicoTheme.typography.bodyMedium,
         )
 
@@ -207,6 +228,8 @@ private fun BrushOptionButton(
 
 private class PaintSceneState {
     private val sceneRoot = Entity().apply { setName("PaintSceneRoot") }
+    private val leftInput = HandDrawInputState(HandSide.Left)
+    private val rightInput = HandDrawInputState(HandSide.Right)
     private val leftStroke =
         DynamicBrushHand(
             handName = "Left",
@@ -234,9 +257,39 @@ private class PaintSceneState {
         attached = true
     }
 
+    fun handlePointerEvents(
+        eventList: List<SpatialPointerInfo>,
+        handTrackingData: HandTrackingData,
+    ) {
+        eventList.forEach { event ->
+            if (event.targetedEntity == null) return@forEach
+
+            when (resolveHandSide(event, handTrackingData)) {
+                HandSide.Left -> leftInput.onUiPointerEvent(event)
+                HandSide.Right -> rightInput.onUiPointerEvent(event)
+                null -> {
+                    leftInput.onUiPointerEvent(event)
+                    rightInput.onUiPointerEvent(event)
+                }
+            }
+        }
+    }
+
     fun update(handTrackingData: HandTrackingData) {
-        leftStroke.update(handTrackingData.left, sceneRoot)
-        rightStroke.update(handTrackingData.right, sceneRoot)
+        val now = SystemClock.uptimeMillis()
+
+        if (handTrackingData.left == null) {
+            leftInput.reset()
+        }
+        if (handTrackingData.right == null) {
+            rightInput.reset()
+        }
+
+        leftInput.updateLongPinchState(handTrackingData.left, now)
+        rightInput.updateLongPinchState(handTrackingData.right, now)
+
+        leftStroke.update(handTrackingData.left, sceneRoot, leftInput.shouldDraw)
+        rightStroke.update(handTrackingData.right, sceneRoot, rightInput.shouldDraw)
     }
 
     fun setBrushConfig(config: BrushConfig) {
@@ -274,7 +327,7 @@ private class DynamicBrushHand(
             mode = BrushMode.Tube,
         )
 
-    private var pinchActive = false
+    private var drawActive = false
     private var activeStroke: BrushStroke? = null
     private val finishedStrokes = mutableListOf<BrushStroke>()
     private var strokeIndex = 0
@@ -294,7 +347,11 @@ private class DynamicBrushHand(
         )
     }
 
-    fun update(handPose: HandPose?, root: Entity) {
+    fun update(
+        handPose: HandPose?,
+        root: Entity,
+        shouldDraw: Boolean,
+    ) {
         if (handPose == null) {
             endStroke()
             cursorEntity.enabled = false
@@ -309,21 +366,13 @@ private class DynamicBrushHand(
         cursorEntity.enabled = true
         cursorEntity.components[TransformComponent::class.java]?.setPosition(localDrawPoint)
 
-        val pinchDistance = Vector3.distance(indexTip.position, thumbTip.position)
-        val isPinching =
-            if (pinchActive) {
-                pinchDistance < PINCH_RELEASE_DISTANCE_M
-            } else {
-                pinchDistance < PINCH_START_DISTANCE_M
-            }
-
-        if (!isPinching) {
+        if (!shouldDraw) {
             endStroke()
             return
         }
 
-        if (!pinchActive) {
-            pinchActive = true
+        if (!drawActive) {
+            drawActive = true
             beginStroke(localDrawPoint)
             return
         }
@@ -353,7 +402,7 @@ private class DynamicBrushHand(
         finishedStrokes.forEach { it.dispose() }
         finishedStrokes.clear()
         strokesRoot.removeAllChildren()
-        pinchActive = false
+        drawActive = false
     }
 
     private fun beginStroke(startPoint: Vector3): BrushStroke {
@@ -381,7 +430,7 @@ private class DynamicBrushHand(
     }
 
     private fun endStroke() {
-        pinchActive = false
+        drawActive = false
         activeStroke?.let { finishAndStore(it) }
         activeStroke = null
     }
@@ -405,6 +454,83 @@ private data class BrushConfig(
 private enum class BrushMode {
     Tube,
     SphereSteps,
+}
+
+private enum class HandSide {
+    Left,
+    Right,
+}
+
+private class HandDrawInputState(
+    private val handSide: HandSide,
+) {
+    private var activeUiPointerId: PointerId? = null
+    private var uiPressed = false
+    private var pinchHoldStartUptimeMillis: Long? = null
+    var shouldDraw = false
+        private set
+
+    fun onUiPointerEvent(event: SpatialPointerInfo) {
+        val pointerId = event.pointerId
+
+        when {
+            event.isDownEvent() -> {
+                activeUiPointerId = pointerId
+                uiPressed = true
+                shouldDraw = false
+                pinchHoldStartUptimeMillis = null
+            }
+
+            activeUiPointerId == pointerId && (event.isUpEvent() || !event.pressed) -> {
+                activeUiPointerId = null
+                uiPressed = false
+            }
+        }
+    }
+
+    fun updateLongPinchState(
+        handPose: HandPose?,
+        nowUptimeMillis: Long,
+    ) {
+        if (uiPressed || handPose == null) {
+            pinchHoldStartUptimeMillis = null
+            shouldDraw = false
+            return
+        }
+
+        val pinchDistance = handPose.pinchDistance()
+        val withinPinchRange =
+            if (shouldDraw) {
+                pinchDistance < PINCH_RELEASE_DISTANCE_M
+            } else {
+                pinchDistance < PINCH_START_DISTANCE_M
+            }
+
+        if (!withinPinchRange) {
+            pinchHoldStartUptimeMillis = null
+            shouldDraw = false
+            return
+        }
+
+        if (shouldDraw) {
+            return
+        }
+
+        if (pinchHoldStartUptimeMillis == null) {
+            pinchHoldStartUptimeMillis = nowUptimeMillis
+        }
+
+        shouldDraw =
+            nowUptimeMillis - (pinchHoldStartUptimeMillis ?: nowUptimeMillis) >=
+                LONG_PINCH_ACTIVATION_MS
+    }
+
+    fun reset() {
+        activeUiPointerId = null
+        uiPressed = false
+        pinchHoldStartUptimeMillis = null
+        shouldDraw = false
+    }
 }
 
 private enum class BrushSizePreset(
@@ -925,6 +1051,40 @@ private fun createBrushMaterial(color: Color4): PhysicallyBasedMaterial =
         setAmbientOcclusion(1f)
     }
 
+private fun resolveHandSide(
+    event: SpatialPointerInfo,
+    handTrackingData: HandTrackingData,
+): HandSide? {
+    val eventPosition = event.position3D.toVector3()
+    val leftPoint = handTrackingData.left?.pinchCenter()
+    val rightPoint = handTrackingData.right?.pinchCenter()
+
+    return when {
+        leftPoint == null && rightPoint == null -> null
+        leftPoint != null && rightPoint == null -> HandSide.Left
+        leftPoint == null && rightPoint != null -> HandSide.Right
+        else -> {
+            val leftDistance = Vector3.distance(leftPoint!!, eventPosition)
+            val rightDistance = Vector3.distance(rightPoint!!, eventPosition)
+            if (leftDistance <= rightDistance) HandSide.Left else HandSide.Right
+        }
+    }
+}
+
+private fun HandPose.pinchCenter(): Vector3 {
+    val indexTip = this[HandJoint.Index.INDEX_TIP]
+    val thumbTip = this[HandJoint.Index.THUMB_TIP]
+    return (indexTip.position + thumbTip.position) / 2f
+}
+
+private fun HandPose.pinchDistance(): Float {
+    val indexTip = this[HandJoint.Index.INDEX_TIP]
+    val thumbTip = this[HandJoint.Index.THUMB_TIP]
+    return Vector3.distance(indexTip.position, thumbTip.position)
+}
+
+private fun com.pico.spatial.ui.geometry.Offset3D.toVector3(): Vector3 = Vector3(x, y, z)
+
 private const val PINCH_START_DISTANCE_M = 0.02f
 private const val PINCH_RELEASE_DISTANCE_M = 0.03f
 private const val BRUSH_RADIUS_M = 0.008f
@@ -940,6 +1100,7 @@ private const val THIN_STROKE_SCALE = 0.42f
 private const val END_TRANSITION_DISTANCE_M = 0.10f
 private const val END_CAP_LENGTH_M = 0.018f
 private const val END_CAP_SAMPLE_COUNT = 5
+private const val LONG_PINCH_ACTIVATION_MS = 450L
 private const val CONTROL_PANEL_ATTACHMENT_ID = "brush_control_panel"
 private val CONTROL_PANEL_POSITION = Vector3(0.34f, 1.30f, -0.58f)
 private const val CONTROL_PANEL_SCALE = 1.0f
