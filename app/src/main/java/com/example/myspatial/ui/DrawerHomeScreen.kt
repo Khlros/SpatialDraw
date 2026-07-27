@@ -1,18 +1,20 @@
 package com.example.myspatial.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -53,6 +55,17 @@ fun DrawerHomeScreen(modifier: Modifier = Modifier) {
     val handTrackingData by
         handTrackingProvider.dataFlow.collectAsState(initial = HandTrackingData(null, null, 0L))
     val paintScene = remember { PaintSceneState() }
+    var selectedColor by remember { mutableStateOf(BrushColorPreset.Coral) }
+    var selectedSize by remember { mutableStateOf(BrushSizePreset.Medium) }
+    var selectedMode by remember { mutableStateOf(BrushMode.Tube) }
+
+    paintScene.setBrushConfig(
+        BrushConfig(
+            color = selectedColor.color,
+            radius = selectedSize.radius,
+            mode = selectedMode,
+        ),
+    )
 
     DisposableEffect(handTrackingProvider) {
         handTrackingProvider.start()
@@ -67,50 +80,128 @@ fun DrawerHomeScreen(modifier: Modifier = Modifier) {
     ) {
         SpatialView(
             modifier = Modifier.fillMaxSize(),
-            initial = { content, _ ->
+            initial = { content, attachments ->
                 paintScene.attach(content)
+                attachments.entity(CONTROL_PANEL_ATTACHMENT_ID)?.let { panel ->
+                    panel.components.set(
+                        TransformComponent()
+                            .setPosition(CONTROL_PANEL_POSITION)
+                            .setScaleVector(Vector3(CONTROL_PANEL_SCALE)),
+                    )
+                    content.addEntity(panel)
+                }
+            },
+            attachments = {
+                AttachmentPanel(
+                    id = CONTROL_PANEL_ATTACHMENT_ID,
+                ) {
+                    BrushControlPanel(
+                        selectedColor = selectedColor,
+                        selectedSize = selectedSize,
+                        selectedMode = selectedMode,
+                        onColorSelected = { selectedColor = it },
+                        onSizeSelected = { selectedSize = it },
+                        onModeSelected = { selectedMode = it },
+                        onClear = { paintScene.clear() },
+                    )
+                }
             },
             update = { _, _ ->
                 paintScene.update(handTrackingData)
             },
         )
+    }
+}
 
-        Column(
-            modifier =
-                Modifier
-                    .align(Alignment.TopStart)
-                    .fillMaxWidth(0.4f)
-                    .fillMaxHeight()
-                    .padding(12.dp)
-                    .background(Color(0x66303030))
-                    .padding(20.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-            horizontalAlignment = Alignment.Start,
-        ) {
-            Text(
-                text = "Drawer Paint Prototype",
-                style = PicoTheme.typography.displaySmall,
+@Composable
+private fun BrushControlPanel(
+    selectedColor: BrushColorPreset,
+    selectedSize: BrushSizePreset,
+    selectedMode: BrushMode,
+    onColorSelected: (BrushColorPreset) -> Unit,
+    onSizeSelected: (BrushSizePreset) -> Unit,
+    onModeSelected: (BrushMode) -> Unit,
+    onClear: () -> Unit,
+) {
+    Column(
+        modifier =
+            Modifier
+                .width(320.dp)
+                .background(Color(0xCC1B1D24))
+                .padding(18.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+        horizontalAlignment = Alignment.Start,
+    ) {
+        Text(text = "Brush Panel", style = PicoTheme.typography.titleLarge)
+        Text(
+            text = "面板固定在你前方偏右，可以直接切颜色、粗细和笔迹模式。",
+            style = PicoTheme.typography.bodyMedium,
+        )
+
+        Text(text = "模式", style = PicoTheme.typography.titleMedium)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            BrushOptionButton(
+                label = "动态线",
+                selected = selectedMode == BrushMode.Tube,
+                onClick = { onModeSelected(BrushMode.Tube) },
             )
-            Text(
-                text = "当前版本：左右手都支持 pinch 绘制，并且可以同时画。",
-                style = PicoTheme.typography.titleMedium,
+            BrushOptionButton(
+                label = "圆球点阵",
+                selected = selectedMode == BrushMode.SphereSteps,
+                onClick = { onModeSelected(BrushMode.SphereSteps) },
             )
-            Text(
-                text = "实现方式：每条 stroke 在 pinch 期间持续更新动态 mesh，放开后固化成一整条笔迹。",
-                style = PicoTheme.typography.bodyLarge,
-            )
-            Text(
-                text = "操作提示：左右手分别捏合拇指和食指，移动手指即可同时画两条 3D 笔刷线。",
-                style = PicoTheme.typography.bodyLarge,
-            )
-            Text(
-                text = "颜色区分：左手蓝色，右手橙红色。",
-                style = PicoTheme.typography.bodyLarge,
-            )
-            Button(onClick = { paintScene.clear() }) {
-                Text(text = "Clear Stroke")
+        }
+
+        Text(text = "粗细", style = PicoTheme.typography.titleMedium)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            BrushSizePreset.entries.forEach { size ->
+                BrushOptionButton(
+                    label = size.label,
+                    selected = selectedSize == size,
+                    onClick = { onSizeSelected(size) },
+                )
             }
         }
+
+        Text(text = "颜色", style = PicoTheme.typography.titleMedium)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            BrushColorPreset.entries.take(3).forEach { color ->
+                BrushOptionButton(
+                    label = color.label,
+                    selected = selectedColor == color,
+                    onClick = { onColorSelected(color) },
+                )
+            }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            BrushColorPreset.entries.drop(3).forEach { color ->
+                BrushOptionButton(
+                    label = color.label,
+                    selected = selectedColor == color,
+                    onClick = { onColorSelected(color) },
+                )
+            }
+        }
+
+        Text(
+            text = "圆球点阵模式下，轨迹至少移动 10cm 才会再落下一颗球。",
+            style = PicoTheme.typography.bodyMedium,
+        )
+
+        Button(onClick = onClear) {
+            Text(text = "Clear Stroke")
+        }
+    }
+}
+
+@Composable
+private fun BrushOptionButton(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    Button(onClick = onClick) {
+        Text(text = if (selected) "[$label]" else label)
     }
 }
 
@@ -119,14 +210,18 @@ private class PaintSceneState {
     private val leftStroke =
         DynamicBrushHand(
             handName = "Left",
-            color = Color4.fromLinearHex("0x4e8cffFF"),
             cursorColor = Color4.fromLinearHex("0x82b0ffff"),
         )
     private val rightStroke =
         DynamicBrushHand(
             handName = "Right",
-            color = Color4.fromLinearHex("0xff6b57ff"),
             cursorColor = Color4.fromLinearHex("0xffd166ff"),
+        )
+    private var currentBrushConfig =
+        BrushConfig(
+            color = BrushColorPreset.Coral.color,
+            radius = BrushSizePreset.Medium.radius,
+            mode = BrushMode.Tube,
         )
 
     private var attached = false
@@ -144,6 +239,12 @@ private class PaintSceneState {
         rightStroke.update(handTrackingData.right, sceneRoot)
     }
 
+    fun setBrushConfig(config: BrushConfig) {
+        currentBrushConfig = config
+        leftStroke.setBrushConfig(config)
+        rightStroke.setBrushConfig(config)
+    }
+
     fun clear() {
         leftStroke.clear()
         rightStroke.clear()
@@ -152,31 +253,45 @@ private class PaintSceneState {
 
 private class DynamicBrushHand(
     handName: String,
-    color: Color4,
     cursorColor: Color4,
 ) {
     private val strokesRoot = Entity().apply { setName("${handName}StrokeRoot") }
+    private val cursorMaterial =
+        UnlitMaterial.create(BlendingMode.OPAQUE).apply {
+            setBaseColor(cursorColor)
+        }
     private val cursorEntity =
         createSphereEntity(
             name = "${handName}BrushCursor",
-            material =
-                UnlitMaterial.create(BlendingMode.OPAQUE).apply {
-                    setBaseColor(cursorColor)
-                },
+            material = cursorMaterial,
             radius = 0.012f,
             scale = 1f,
         )
-    private val brushMaterial = createBrushMaterial(color)
+    private var brushConfig =
+        BrushConfig(
+            color = BrushColorPreset.Coral.color,
+            radius = BrushSizePreset.Medium.radius,
+            mode = BrushMode.Tube,
+        )
 
     private var pinchActive = false
-    private var activeStroke: DynamicTubeStroke? = null
-    private val finishedStrokes = mutableListOf<DynamicTubeStroke>()
+    private var activeStroke: BrushStroke? = null
+    private val finishedStrokes = mutableListOf<BrushStroke>()
     private var strokeIndex = 0
 
     fun attach(parent: Entity) {
         parent.addChild(strokesRoot)
         parent.addChild(cursorEntity)
         cursorEntity.enabled = false
+        setBrushConfig(brushConfig)
+    }
+
+    fun setBrushConfig(config: BrushConfig) {
+        brushConfig = config
+        cursorMaterial.setBaseColor(config.color)
+        cursorEntity.components[TransformComponent::class.java]?.setScaleVector(
+            Vector3((config.radius / CURSOR_BASE_RADIUS_M).coerceAtLeast(0.5f)),
+        )
     }
 
     fun update(handPose: HandPose?, root: Entity) {
@@ -241,15 +356,29 @@ private class DynamicBrushHand(
         pinchActive = false
     }
 
-    private fun beginStroke(startPoint: Vector3): DynamicTubeStroke =
-        DynamicTubeStroke(
-            strokeName = "${strokesRoot.getName()}_${strokeIndex++}",
-            material = brushMaterial,
-            parent = strokesRoot,
-        ).also {
-            it.appendPoint(startPoint)
-            activeStroke = it
-        }
+    private fun beginStroke(startPoint: Vector3): BrushStroke {
+        val strokeName = "${strokesRoot.getName()}_${strokeIndex++}"
+        val stroke =
+            when (brushConfig.mode) {
+                BrushMode.Tube ->
+                    DynamicTubeStroke(
+                        strokeName = strokeName,
+                        material = createBrushMaterial(brushConfig.color),
+                        parent = strokesRoot,
+                        radius = brushConfig.radius,
+                    )
+                BrushMode.SphereSteps ->
+                    SphereStepStroke(
+                        strokeName = strokeName,
+                        material = createBrushMaterial(brushConfig.color),
+                        parent = strokesRoot,
+                        radius = brushConfig.radius,
+                    )
+            }
+        stroke.appendPoint(startPoint)
+        activeStroke = stroke
+        return stroke
+    }
 
     private fun endStroke() {
         pinchActive = false
@@ -257,7 +386,7 @@ private class DynamicBrushHand(
         activeStroke = null
     }
 
-    private fun finishAndStore(stroke: DynamicTubeStroke) {
+    private fun finishAndStore(stroke: BrushStroke) {
         stroke.finish()
         if (stroke.hasRenderableMesh) {
             finishedStrokes.add(stroke)
@@ -267,25 +396,70 @@ private class DynamicBrushHand(
     }
 }
 
+private data class BrushConfig(
+    val color: Color4,
+    val radius: Float,
+    val mode: BrushMode,
+)
+
+private enum class BrushMode {
+    Tube,
+    SphereSteps,
+}
+
+private enum class BrushSizePreset(
+    val label: String,
+    val radius: Float,
+) {
+    Small("细", 0.0055f),
+    Medium("中", 0.008f),
+    Large("粗", 0.012f),
+}
+
+private enum class BrushColorPreset(
+    val label: String,
+    val color: Color4,
+) {
+    Coral("珊瑚", Color4.fromLinearHex("0xff6b57ff")),
+    Sky("天蓝", Color4.fromLinearHex("0x4e8cffFF")),
+    Mint("薄荷", Color4.fromLinearHex("0x47d7acff")),
+    Gold("金色", Color4.fromLinearHex("0xf6c445ff")),
+    Violet("紫色", Color4.fromLinearHex("0xa779ffff")),
+    White("白色", Color4.fromLinearHex("0xf5f7ffff")),
+}
+
+private interface BrushStroke {
+    val lastPoint: Vector3?
+    val vertexCount: Int
+    val hasRenderableMesh: Boolean
+
+    fun appendPoint(point: Vector3)
+
+    fun finish()
+
+    fun dispose()
+}
+
 private class DynamicTubeStroke(
     private val strokeName: String,
     private val material: Material,
     private val parent: Entity,
-) {
+    private val radius: Float,
+) : BrushStroke {
     private val sampledPoints = mutableListOf<Vector3>()
     private var meshResource: MeshResource? = null
     private var meshEntity: ModelEntity? = null
 
-    val lastPoint: Vector3?
+    override val lastPoint: Vector3?
         get() = sampledPoints.lastOrNull()
 
-    val vertexCount: Int
+    override val vertexCount: Int
         get() = sampledPoints.size * STROKE_RING_SIDES
 
-    val hasRenderableMesh: Boolean
+    override val hasRenderableMesh: Boolean
         get() = meshEntity != null
 
-    fun appendPoint(point: Vector3) {
+    override fun appendPoint(point: Vector3) {
         val previousPoint = sampledPoints.lastOrNull()
         if (previousPoint == null) {
             sampledPoints.add(point)
@@ -314,13 +488,13 @@ private class DynamicTubeStroke(
         }
     }
 
-    fun finish() {
+    override fun finish() {
         if (sampledPoints.size >= 2) {
             rebuildMesh()
         }
     }
 
-    fun dispose() {
+    override fun dispose() {
         meshEntity?.let { parent.removeChild(it) }
         meshEntity = null
         meshResource?.close()
@@ -328,7 +502,7 @@ private class DynamicTubeStroke(
     }
 
     private fun rebuildMesh() {
-        val meshData = buildTubeMesh(sampledPoints, BRUSH_RADIUS_M)
+        val meshData = buildTubeMesh(sampledPoints, radius)
         val resource = meshResource
         if (resource == null) {
             val newMesh = MeshResource.createWithMeshModel(meshData.model, meshData.bounds, strokeName)
@@ -341,6 +515,83 @@ private class DynamicTubeStroke(
         } else {
             resource.replaceWithMeshModel(meshData.model, meshData.bounds)
         }
+    }
+}
+
+private class SphereStepStroke(
+    private val strokeName: String,
+    private val material: Material,
+    private val parent: Entity,
+    private val radius: Float,
+) : BrushStroke {
+    private val strokeRoot = Entity().apply { setName(strokeName) }
+    private val sphereMesh = MeshResource.createSphere(radius)
+    private val spheres = mutableListOf<ModelEntity>()
+    private var lastSampledPoint: Vector3? = null
+    private var distanceSinceLastPlacement = 0f
+
+    override val lastPoint: Vector3?
+        get() = lastSampledPoint
+
+    override val vertexCount: Int
+        get() = spheres.size
+
+    override val hasRenderableMesh: Boolean
+        get() = spheres.isNotEmpty()
+
+    init {
+        parent.addChild(strokeRoot)
+    }
+
+    override fun appendPoint(point: Vector3) {
+        val previousPoint = lastSampledPoint
+        lastSampledPoint = point
+
+        if (spheres.isEmpty()) {
+            placeSphere(point)
+            return
+        }
+
+        val nonNullPreviousPoint = previousPoint ?: return
+        var fromPoint = nonNullPreviousPoint
+        var remainingSegmentLength = Vector3.distance(nonNullPreviousPoint, point)
+
+        while (true) {
+            val distanceToNextPlacement = SPHERE_STEP_DISTANCE_M - distanceSinceLastPlacement
+            if (remainingSegmentLength < distanceToNextPlacement) {
+                break
+            }
+            val segment = point - fromPoint
+            val segmentLength = segment.length()
+            val direction = segment / segmentLength
+            val nextPoint = fromPoint + direction * distanceToNextPlacement
+            placeSphere(nextPoint)
+            fromPoint = nextPoint
+            remainingSegmentLength -= distanceToNextPlacement
+            distanceSinceLastPlacement = 0f
+        }
+
+        distanceSinceLastPlacement += remainingSegmentLength
+    }
+
+    override fun finish() = Unit
+
+    override fun dispose() {
+        parent.removeChild(strokeRoot)
+        sphereMesh.close()
+    }
+
+    private fun placeSphere(point: Vector3) {
+        val sphere =
+            ModelEntity(sphereMesh, material).apply {
+                setName("${strokeName}_${spheres.size}")
+                components.set(
+                    TransformComponent().setPosition(point),
+                )
+            }
+        strokeRoot.addChild(sphere)
+        spheres.add(sphere)
+        distanceSinceLastPlacement = 0f
     }
 }
 
@@ -677,16 +928,21 @@ private fun createBrushMaterial(color: Color4): PhysicallyBasedMaterial =
 private const val PINCH_START_DISTANCE_M = 0.02f
 private const val PINCH_RELEASE_DISTANCE_M = 0.03f
 private const val BRUSH_RADIUS_M = 0.008f
+private const val CURSOR_BASE_RADIUS_M = 0.012f
 private const val MIN_POINT_SPACING_M = 0.004f
 private const val TARGET_POINT_SPACING_M = 0.008f
 private const val MAX_SEGMENT_JUMP_M = 0.08f
 private const val MAX_STROKE_VERTICES = 12000
+private const val SPHERE_STEP_DISTANCE_M = 0.10f
 private const val STROKE_RING_SIDES = 12
 private const val SMOOTHING_PASSES = 2
 private const val THIN_STROKE_SCALE = 0.42f
 private const val END_TRANSITION_DISTANCE_M = 0.10f
 private const val END_CAP_LENGTH_M = 0.018f
 private const val END_CAP_SAMPLE_COUNT = 5
+private const val CONTROL_PANEL_ATTACHMENT_ID = "brush_control_panel"
+private val CONTROL_PANEL_POSITION = Vector3(0.34f, 1.30f, -0.58f)
+private const val CONTROL_PANEL_SCALE = 1.0f
 private const val UV_REPEAT_DISTANCE_M = 0.03f
 private const val EPSILON_M = 0.0001f
 private const val TAU_F = (PI * 2.0).toFloat()
