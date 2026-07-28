@@ -966,9 +966,16 @@ private class DynamicTubeStroke(
     private val parent: Entity,
     private val radius: Float,
 ) : BrushStroke {
+    private val strokeRoot = Entity().apply { setName(strokeName) }
     private val sampledPoints = mutableListOf<Vector3>()
-    private var meshResource: MeshResource? = null
-    private var meshEntity: ModelEntity? = null
+    private val cumulativeLengths = mutableListOf<Float>()
+    private var dynamicStartIndex = 0
+    private var nextFreezeTriggerLengthM = INITIAL_FREEZE_TRIGGER_LENGTH_M
+    private val frozenRings = mutableListOf<TubeRing>()
+    private var frozenMeshSection: TubeMeshSection? = null
+    private var dynamicAnchorProfile: StrokeProfile? = null
+    private var dynamicMeshResource: MeshResource? = null
+    private var dynamicMeshEntity: ModelEntity? = null
 
     override val lastPoint: Vector3?
         get() = sampledPoints.lastOrNull()
@@ -977,12 +984,17 @@ private class DynamicTubeStroke(
         get() = sampledPoints.size * STROKE_RING_SIDES
 
     override val hasRenderableMesh: Boolean
-        get() = meshEntity != null
+        get() = dynamicMeshEntity != null
+
+    init {
+        parent.addChild(strokeRoot)
+    }
 
     override fun appendPoint(point: Vector3) {
         val previousPoint = sampledPoints.lastOrNull()
         if (previousPoint == null) {
             sampledPoints.add(point)
+            cumulativeLengths.add(0f)
             return
         }
 
@@ -999,42 +1011,194 @@ private class DynamicTubeStroke(
             val currentLast = sampledPoints.last()
             if (Vector3.distance(currentLast, interpolated) >= MIN_POINT_SPACING_M) {
                 sampledPoints.add(interpolated)
+                cumulativeLengths.add(cumulativeLengths.last() + Vector3.distance(currentLast, interpolated))
                 changed = true
             }
         }
 
         if (changed && sampledPoints.size >= 2) {
-            rebuildMesh()
+            updateMeshes()
         }
     }
 
     override fun finish() {
         if (sampledPoints.size >= 2) {
-            rebuildMesh()
+            updateMeshes()
         }
     }
 
     override fun dispose() {
-        meshEntity?.let { parent.removeChild(it) }
-        meshEntity = null
-        meshResource?.close()
-        meshResource = null
+        dynamicMeshEntity?.let { strokeRoot.removeChild(it) }
+        dynamicMeshEntity = null
+        dynamicMeshResource?.close()
+        dynamicMeshResource = null
+        frozenRings.clear()
+        frozenMeshSection = null
+        dynamicAnchorProfile = null
+        parent.removeChild(strokeRoot)
     }
 
-    private fun rebuildMesh() {
-        val meshData = buildTubeMesh(sampledPoints, radius)
-        val resource = meshResource
+    private fun updateMeshes() {
+        var dynamicWindowProfile = buildDynamicWindowProfile()
+        var dynamicRings = buildDynamicRings(dynamicWindowProfile)
+        if (freezeStablePrefix(dynamicWindowProfile, dynamicRings)) {
+            dynamicWindowProfile = buildDynamicWindowProfile()
+            dynamicRings = buildDynamicRings(dynamicWindowProfile)
+        }
+        val meshData =
+            when {
+                frozenMeshSection != null && dynamicRings != null ->
+                    buildCombinedTubeMeshFromRings(
+                        frozenSection = frozenMeshSection!!,
+                        dynamicRings = dynamicRings,
+                        radius = radius,
+                    )
+                frozenMeshSection != null -> buildTubeMeshDataFromSection(frozenMeshSection!!)
+                dynamicRings != null -> buildTubeMeshDataFromRings(dynamicRings, radius)
+                else -> null
+            }
+        if (meshData == null) {
+            dynamicMeshEntity?.let { strokeRoot.removeChild(it) }
+            dynamicMeshEntity = null
+            dynamicMeshResource?.close()
+            dynamicMeshResource = null
+            return
+        }
+        val resource = dynamicMeshResource
         if (resource == null) {
             val newMesh = MeshResource.createWithMeshModel(meshData.model, meshData.bounds, strokeName)
-            meshResource = newMesh
-            meshEntity =
+            dynamicMeshResource = newMesh
+            dynamicMeshEntity =
                 ModelEntity(newMesh, material).apply {
                     setName(strokeName)
                 }
-            parent.addChild(meshEntity!!)
+            strokeRoot.addChild(dynamicMeshEntity!!)
         } else {
             resource.replaceWithMeshModel(meshData.model, meshData.bounds)
         }
+    }
+
+    private fun buildDynamicRings(profile: StrokeProfile?): List<TubeRing>? {
+        if (profile == null || profile.positions.size < 2) {
+            return null
+        }
+
+        return if (frozenRings.isEmpty()) {
+            buildTubeRingsFromProfile(profile)
+        } else {
+            buildTubeRingsFromProfile(
+                profile = profile,
+                initialRing = frozenRings.last(),
+            )
+        }
+    }
+
+    private fun buildDynamicWindowProfile(): StrokeProfile? {
+        val dynamicPoints = sampledPoints.subList(dynamicStartIndex, sampledPoints.size).toList()
+        val generatedProfile =
+            if (dynamicPoints.size >= 2) {
+                buildStrokeProfile(
+                    points = dynamicPoints,
+                    startCap = dynamicStartIndex == 0 && dynamicAnchorProfile == null,
+                    endCap = true,
+                    previousSmoothingPoints =
+                        sampledPoints.subList(
+                            maxOf(0, dynamicStartIndex - SMOOTHING_CONTEXT_POINT_COUNT),
+                            dynamicStartIndex,
+                        ),
+                )
+            } else {
+                null
+            }
+
+        return when {
+            dynamicAnchorProfile != null && generatedProfile != null ->
+                mergeStrokeProfilesByOverlap(dynamicAnchorProfile!!, generatedProfile)
+            dynamicAnchorProfile != null -> dynamicAnchorProfile
+            else -> generatedProfile
+        }
+    }
+
+    private fun freezeStablePrefix(
+        profile: StrokeProfile?,
+        dynamicRings: List<TubeRing>?,
+    ): Boolean {
+        val totalStrokeLength = cumulativeLengths.lastOrNull() ?: return false
+        if (totalStrokeLength < nextFreezeTriggerLengthM) {
+            return false
+        }
+
+        val latestStableIndex = findLatestStableIndex()
+        if (latestStableIndex <= dynamicStartIndex) {
+            return false
+        }
+
+        val nonNullProfile = profile ?: return false
+        val nonNullDynamicRings = dynamicRings ?: return false
+        if (nonNullProfile.positions.size < MIN_PROFILE_POINTS_PER_CHUNK) {
+            return false
+        }
+
+        val profileLengths = computeCumulativeLengths(nonNullProfile.positions)
+        val totalProfileLength = profileLengths.lastOrNull() ?: return false
+        val freezeLength = totalProfileLength - DYNAMIC_TAIL_KEEP_LENGTH_M
+        if (freezeLength < MIN_FROZEN_PREFIX_LENGTH_M) {
+            return false
+        }
+
+        val maxSplitIndex = nonNullProfile.positions.lastIndex - MIN_PROFILE_POINTS_AFTER_SPLIT
+        var splitIndex = 0
+        while (splitIndex < maxSplitIndex && profileLengths[splitIndex + 1] <= freezeLength) {
+            splitIndex++
+        }
+        if (splitIndex < 1) {
+            return false
+        }
+
+        var anchorEndIndex = splitIndex
+        val anchorTargetLength = profileLengths[splitIndex] + DYNAMIC_ANCHOR_LENGTH_M
+        while (anchorEndIndex < nonNullProfile.positions.lastIndex && profileLengths[anchorEndIndex] < anchorTargetLength) {
+            anchorEndIndex++
+        }
+        anchorEndIndex = maxOf(anchorEndIndex, splitIndex + 1)
+
+        val ringsToFreeze =
+            if (frozenRings.isEmpty()) {
+                nonNullDynamicRings.take(splitIndex + 1)
+            } else {
+                nonNullDynamicRings.drop(1).take(splitIndex)
+            }
+        if (ringsToFreeze.isEmpty()) {
+            return false
+        }
+
+        frozenRings.addAll(ringsToFreeze)
+        dynamicAnchorProfile = sliceStrokeProfile(nonNullProfile, splitIndex, anchorEndIndex)
+        frozenMeshSection = buildTubeMeshSectionFromRings(frozenRings, radius)
+        dynamicStartIndex = latestStableIndex
+        nextFreezeTriggerLengthM += FREEZE_TRIGGER_INTERVAL_M
+        return true
+    }
+
+    private fun findLatestStableIndex(): Int {
+        if (sampledPoints.size < 3) {
+            return dynamicStartIndex
+        }
+
+        val stableCutoffLength = cumulativeLengths.last() - DYNAMIC_TAIL_KEEP_LENGTH_M
+        if (stableCutoffLength <= cumulativeLengths[dynamicStartIndex]) {
+            return dynamicStartIndex
+        }
+
+        var stableIndex = dynamicStartIndex
+        val lastAllowedIndex = sampledPoints.lastIndex - 1
+        while (
+            stableIndex < lastAllowedIndex &&
+            cumulativeLengths[stableIndex + 1] <= stableCutoffLength
+        ) {
+            stableIndex++
+        }
+        return stableIndex
     }
 }
 
@@ -1120,42 +1284,108 @@ private data class TubeMeshData(
     val bounds: BoundingBox,
 )
 
+private data class TubeRing(
+    val center: Vector3,
+    val radiusScale: Float,
+    val normal: Vector3,
+    val binormal: Vector3,
+    val v: Float,
+)
+
+private data class TubeMeshSection(
+    val positions: List<Vector3>,
+    val normals: List<Vector3>,
+    val uv0: List<Vector2>,
+    val indices: List<Int>,
+)
+
 private data class StrokeProfile(
     val positions: List<Vector3>,
     val radiusScales: List<Float>,
 )
 
-private fun buildTubeMesh(
-    points: List<Vector3>,
+private fun buildTubeRingsFromProfile(
+    profile: StrokeProfile,
+    previousContextPoint: Vector3? = null,
+    nextContextPoint: Vector3? = null,
+    initialRing: TubeRing? = null,
+): List<TubeRing> {
+    val positions =
+        if (initialRing == null) {
+            profile.positions
+        } else {
+            buildList(profile.positions.size) {
+                add(initialRing.center)
+                addAll(profile.positions.drop(1))
+            }
+        }
+    val radiusScales =
+        if (initialRing == null) {
+            profile.radiusScales
+        } else {
+            buildList(profile.radiusScales.size) {
+                add(initialRing.radiusScale)
+                addAll(profile.radiusScales.drop(1))
+            }
+        }
+    val tangents =
+        computeTangents(
+            points = positions,
+            previousContextPoint = previousContextPoint,
+            nextContextPoint = nextContextPoint,
+        )
+    val frames =
+        computeFrames(
+            tangents = tangents,
+            initialFrame = initialRing?.let { TubeFrame(normal = it.normal, binormal = it.binormal) },
+        )
+    val cumulativeLengths = computeCumulativeLengths(positions)
+    val vOffset = initialRing?.v ?: 0f
+
+    return positions.indices.map { pointIndex ->
+        TubeRing(
+            center = positions[pointIndex],
+            radiusScale = radiusScales[pointIndex],
+            normal = frames[pointIndex].normal,
+            binormal = frames[pointIndex].binormal,
+            v = cumulativeLengths[pointIndex] / UV_REPEAT_DISTANCE_M + vOffset,
+        )
+    }
+}
+
+private fun buildTubeMeshDataFromRings(
+    rings: List<TubeRing>,
     radius: Float,
 ): TubeMeshData {
-    val profile = buildStrokeProfile(points)
-    val tangents = computeTangents(profile.positions)
-    val frames = computeFrames(tangents)
-    val cumulativeLengths = computeCumulativeLengths(profile.positions)
+    val section = buildTubeMeshSectionFromRings(rings, radius)
+    return buildTubeMeshDataFromSection(section)
+}
 
+private fun buildTubeMeshSectionFromRings(
+    rings: List<TubeRing>,
+    radius: Float,
+): TubeMeshSection {
     val positions = mutableListOf<Vector3>()
     val normals = mutableListOf<Vector3>()
     val uv0 = mutableListOf<Vector2>()
     val indices = mutableListOf<Int>()
 
-    for (pointIndex in profile.positions.indices) {
-        val point = profile.positions[pointIndex]
-        val frame = frames[pointIndex]
-        val v = cumulativeLengths[pointIndex] / UV_REPEAT_DISTANCE_M
-        val ringRadius = radius * profile.radiusScales[pointIndex]
+    for (pointIndex in rings.indices) {
+        val ring = rings[pointIndex]
+        val point = ring.center
+        val ringRadius = radius * ring.radiusScale
 
         for (side in 0 until STROKE_RING_SIDES) {
             val angle = TAU_F * side.toFloat() / STROKE_RING_SIDES.toFloat()
             val radial =
-                (frame.normal * cos(angle) + frame.binormal * sin(angle)).normalize()
+                (ring.normal * cos(angle) + ring.binormal * sin(angle)).normalize()
             positions.add(point + radial * ringRadius)
             normals.add(radial)
-            uv0.add(Vector2(side.toFloat() / STROKE_RING_SIDES.toFloat(), v))
+            uv0.add(Vector2(side.toFloat() / STROKE_RING_SIDES.toFloat(), ring.v))
         }
     }
 
-    for (ring in 0 until profile.positions.lastIndex) {
+    for (ring in 0 until rings.lastIndex) {
         val ringStart = ring * STROKE_RING_SIDES
         val nextRingStart = (ring + 1) * STROKE_RING_SIDES
         for (side in 0 until STROKE_RING_SIDES) {
@@ -1165,18 +1395,111 @@ private fun buildTubeMesh(
             val c = nextRingStart + side
             val d = nextRingStart + nextSide
 
+            // Keep the side quads wound outward so the tube front faces remain visible.
             indices.add(a)
-            indices.add(c)
-            indices.add(b)
             indices.add(b)
             indices.add(c)
+            indices.add(b)
             indices.add(d)
+            indices.add(c)
         }
     }
 
-    val model = MeshModel(positions, indices, normals, uv0 = uv0)
-    val bounds = computeBoundingBox(positions)
+    return TubeMeshSection(
+        positions = positions,
+        normals = normals,
+        uv0 = uv0,
+        indices = indices,
+    )
+}
+
+private fun buildTubeMeshDataFromSection(section: TubeMeshSection): TubeMeshData {
+    val model = MeshModel(section.positions, section.indices, section.normals, uv0 = section.uv0)
+    val bounds = computeBoundingBox(section.positions)
     return TubeMeshData(model = model, bounds = bounds)
+}
+
+private fun buildCombinedTubeMeshFromRings(
+    frozenSection: TubeMeshSection,
+    dynamicRings: List<TubeRing>,
+    radius: Float,
+): TubeMeshData {
+    if (dynamicRings.isEmpty()) {
+        return buildTubeMeshDataFromSection(frozenSection)
+    }
+    val dynamicSection = buildTubeMeshSectionFromRings(dynamicRings, radius)
+    if (dynamicSection.positions.size < STROKE_RING_SIDES) {
+        return buildTubeMeshDataFromSection(frozenSection)
+    }
+
+    val positions = frozenSection.positions + dynamicSection.positions.drop(STROKE_RING_SIDES)
+    val normals = frozenSection.normals + dynamicSection.normals.drop(STROKE_RING_SIDES)
+    val uv0 = frozenSection.uv0 + dynamicSection.uv0.drop(STROKE_RING_SIDES)
+    val indices = mutableListOf<Int>()
+    indices.addAll(frozenSection.indices)
+    val dynamicIndexOffset = frozenSection.positions.size - STROKE_RING_SIDES
+    indices.addAll(dynamicSection.indices.map { it + dynamicIndexOffset })
+    return buildTubeMeshDataFromSection(
+        TubeMeshSection(
+            positions = positions,
+            normals = normals,
+            uv0 = uv0,
+            indices = indices,
+        ),
+    )
+}
+
+private fun sliceStrokeProfile(
+    profile: StrokeProfile,
+    startIndex: Int,
+    endIndexInclusive: Int,
+): StrokeProfile =
+    StrokeProfile(
+        positions = profile.positions.subList(startIndex, endIndexInclusive + 1).toList(),
+        radiusScales = profile.radiusScales.subList(startIndex, endIndexInclusive + 1).toList(),
+    )
+
+private fun mergeStrokeProfilesByOverlap(
+    prefixProfile: StrokeProfile,
+    suffixProfile: StrokeProfile,
+): StrokeProfile {
+    if (prefixProfile.positions.isEmpty()) return suffixProfile
+    if (suffixProfile.positions.isEmpty()) return prefixProfile
+
+    val dropIndex = (findProfileOverlapIndex(prefixProfile, suffixProfile) ?: -1) + 1
+
+    return StrokeProfile(
+        positions = prefixProfile.positions + suffixProfile.positions.drop(dropIndex),
+        radiusScales = prefixProfile.radiusScales + suffixProfile.radiusScales.drop(dropIndex),
+    )
+}
+
+private fun findProfileOverlapIndex(
+    prefixProfile: StrokeProfile,
+    suffixProfile: StrokeProfile,
+): Int? {
+    if (prefixProfile.positions.isEmpty() || suffixProfile.positions.isEmpty()) {
+        return null
+    }
+
+    val prefixEnd = prefixProfile.positions.last()
+    val searchLimit = minOf(suffixProfile.positions.size, PROFILE_OVERLAP_SEARCH_POINT_COUNT)
+    var bestIndex = 0
+    var bestDistance = Float.MAX_VALUE
+
+    for (index in 0 until searchLimit) {
+        val distance = Vector3.distance(prefixEnd, suffixProfile.positions[index])
+        if (distance < bestDistance) {
+            bestDistance = distance
+            bestIndex = index
+        }
+    }
+
+    return if (bestDistance <= PROFILE_OVERLAP_DISTANCE_THRESHOLD_M) {
+        bestIndex
+    } else {
+        null
+    }
 }
 
 private data class TubeFrame(
@@ -1184,17 +1507,34 @@ private data class TubeFrame(
     val binormal: Vector3,
 )
 
-private fun computeTangents(points: List<Vector3>): List<Vector3> =
+private fun computeTangents(
+    points: List<Vector3>,
+    previousContextPoint: Vector3? = null,
+    nextContextPoint: Vector3? = null,
+): List<Vector3> =
     points.indices.map { index ->
-        val previous = if (index == 0) points[index] else points[index - 1]
-        val next = if (index == points.lastIndex) points[index] else points[index + 1]
+        val previous =
+            when {
+                index > 0 -> points[index - 1]
+                previousContextPoint != null -> previousContextPoint
+                else -> points[index]
+            }
+        val next =
+            when {
+                index < points.lastIndex -> points[index + 1]
+                nextContextPoint != null -> nextContextPoint
+                else -> points[index]
+            }
         safeNormalize(next - previous, Vector3.FORWARD)
     }
 
-private fun computeFrames(tangents: List<Vector3>): List<TubeFrame> {
+private fun computeFrames(
+    tangents: List<Vector3>,
+    initialFrame: TubeFrame? = null,
+): List<TubeFrame> {
     val frames = mutableListOf<TubeFrame>()
-    var normal = createReferenceNormal(tangents.first())
-    var binormal = safeNormalize(Vector3.cross(tangents.first(), normal), Vector3.RIGHT)
+    var normal = initialFrame?.normal ?: createReferenceNormal(tangents.first())
+    var binormal = initialFrame?.binormal ?: safeNormalize(Vector3.cross(tangents.first(), normal), Vector3.RIGHT)
     var previousTangent = tangents.first()
 
     tangents.forEachIndexed { index, tangent ->
@@ -1234,7 +1574,13 @@ private fun computeCumulativeLengths(points: List<Vector3>): List<Float> {
     return lengths
 }
 
-private fun buildStrokeProfile(points: List<Vector3>): StrokeProfile {
+private fun buildStrokeProfile(
+    points: List<Vector3>,
+    startCap: Boolean,
+    endCap: Boolean,
+    previousSmoothingPoints: List<Vector3> = emptyList(),
+    nextSmoothingPoints: List<Vector3> = emptyList(),
+): StrokeProfile {
     if (points.size < 2) {
         return StrokeProfile(
             positions = points,
@@ -1242,9 +1588,15 @@ private fun buildStrokeProfile(points: List<Vector3>): StrokeProfile {
         )
     }
 
+    val smoothedInput =
+        smoothStrokePointsWithContext(
+            points = points,
+            passes = SMOOTHING_PASSES,
+            previousContextPoints = previousSmoothingPoints,
+            nextContextPoints = nextSmoothingPoints,
+        )
     val corePoints =
-        points
-            .let { smoothStrokePoints(it, SMOOTHING_PASSES) }
+        smoothedInput
             .let { resampleStrokePoints(it, TARGET_POINT_SPACING_M) }
 
     if (corePoints.size < 2) {
@@ -1266,25 +1618,29 @@ private fun buildStrokeProfile(points: List<Vector3>): StrokeProfile {
     val positions = mutableListOf<Vector3>()
     val radiusScales = mutableListOf<Float>()
 
-    for (step in 0 until END_CAP_SAMPLE_COUNT) {
-        val u = step.toFloat() / END_CAP_SAMPLE_COUNT.toFloat()
-        positions.add(corePoints.first() - startTangent * (END_CAP_LENGTH_M * (1f - u)))
-        radiusScales.add(THIN_STROKE_SCALE * hemisphereBlend(u))
+    if (startCap) {
+        for (step in 0 until END_CAP_SAMPLE_COUNT) {
+            val u = step.toFloat() / END_CAP_SAMPLE_COUNT.toFloat()
+            positions.add(corePoints.first() - startTangent * (END_CAP_LENGTH_M * (1f - u)))
+            radiusScales.add(THIN_STROKE_SCALE * hemisphereBlend(u))
+        }
     }
 
     corePoints.forEachIndexed { index, point ->
         val fromStart = bodyLengths[index]
         val fromEnd = totalLength - fromStart
-        val startScale = bodyRadiusScale(fromStart)
-        val endScale = bodyRadiusScale(fromEnd)
+        val startScale = if (startCap) bodyRadiusScale(fromStart) else 1f
+        val endScale = if (endCap) bodyRadiusScale(fromEnd) else 1f
         positions.add(point)
         radiusScales.add(minOf(startScale, endScale))
     }
 
-    for (step in 1..END_CAP_SAMPLE_COUNT) {
-        val u = step.toFloat() / END_CAP_SAMPLE_COUNT.toFloat()
-        positions.add(corePoints.last() + endTangent * (END_CAP_LENGTH_M * u))
-        radiusScales.add(THIN_STROKE_SCALE * hemisphereBlend(1f - u))
+    if (endCap) {
+        for (step in 1..END_CAP_SAMPLE_COUNT) {
+            val u = step.toFloat() / END_CAP_SAMPLE_COUNT.toFloat()
+            positions.add(corePoints.last() + endTangent * (END_CAP_LENGTH_M * u))
+            radiusScales.add(THIN_STROKE_SCALE * hemisphereBlend(1f - u))
+        }
     }
 
     return StrokeProfile(
@@ -1314,6 +1670,34 @@ private fun smoothStrokePoints(
             }
     }
     return smoothed
+}
+
+private fun smoothStrokePointsWithContext(
+    points: List<Vector3>,
+    passes: Int,
+    previousContextPoints: List<Vector3>,
+    nextContextPoints: List<Vector3>,
+): List<Vector3> {
+    if (points.size < 3 || (previousContextPoints.isEmpty() && nextContextPoints.isEmpty())) {
+        return smoothStrokePoints(points, passes)
+    }
+
+    val prefixSize = previousContextPoints.size
+    var smoothed = previousContextPoints + points + nextContextPoints
+    repeat(passes) {
+        smoothed =
+            buildList(smoothed.size) {
+                add(smoothed.first())
+                for (index in 1 until smoothed.lastIndex) {
+                    val previous = smoothed[index - 1]
+                    val current = smoothed[index]
+                    val next = smoothed[index + 1]
+                    add(previous * 0.2f + current * 0.6f + next * 0.2f)
+                }
+                add(smoothed.last())
+            }
+    }
+    return smoothed.subList(prefixSize, prefixSize + points.size)
 }
 
 private fun resampleStrokePoints(
@@ -1532,6 +1916,16 @@ private const val MAX_STROKE_VERTICES = 12000
 private const val SPHERE_STEP_DISTANCE_M = 0.10f
 private const val STROKE_RING_SIDES = 12
 private const val SMOOTHING_PASSES = 2
+private const val SMOOTHING_CONTEXT_POINT_COUNT = 2
+private const val DYNAMIC_TAIL_KEEP_LENGTH_M = 0.20f
+private const val INITIAL_FREEZE_TRIGGER_LENGTH_M = 0.50f
+private const val FREEZE_TRIGGER_INTERVAL_M = 0.50f
+private const val DYNAMIC_ANCHOR_LENGTH_M = 0.028f
+private const val MIN_FROZEN_PREFIX_LENGTH_M = 0.30f
+private const val MIN_PROFILE_POINTS_PER_CHUNK = 6
+private const val MIN_PROFILE_POINTS_AFTER_SPLIT = 4
+private const val PROFILE_OVERLAP_SEARCH_POINT_COUNT = 12
+private const val PROFILE_OVERLAP_DISTANCE_THRESHOLD_M = 0.03f
 private const val THIN_STROKE_SCALE = 0.42f
 private const val END_TRANSITION_DISTANCE_M = 0.10f
 private const val END_CAP_LENGTH_M = 0.018f
