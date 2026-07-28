@@ -2,6 +2,9 @@ package com.example.myspatial.ui
 
 import android.graphics.Color as AndroidColor
 import android.os.SystemClock
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.tween as composeTween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -86,6 +89,8 @@ fun DrawerHomeScreen(modifier: Modifier = Modifier) {
         handTrackingProvider.dataFlow.collectAsState(initial = HandTrackingData(null, null, 0L))
     val latestHandTrackingData = rememberUpdatedState(handTrackingData)
     val paintScene = remember { PaintSceneState() }
+    val leftPanelState = remember { HandPanelState(HandSide.Left, LEFT_CONTROL_PANEL_POSITION) }
+    val rightPanelState = remember { HandPanelState(HandSide.Right, RIGHT_CONTROL_PANEL_POSITION) }
     var leftPanelInteracting by remember { mutableStateOf(false) }
     var rightPanelInteracting by remember { mutableStateOf(false) }
     var leftSelectedColor by remember { mutableStateOf(DEFAULT_LEFT_BRUSH_COLOR) }
@@ -142,19 +147,11 @@ fun DrawerHomeScreen(modifier: Modifier = Modifier) {
             initial = { content, attachments ->
                 paintScene.attach(content)
                 attachments.entity(LEFT_CONTROL_PANEL_ATTACHMENT_ID)?.let { panel ->
-                    panel.components.set(
-                        TransformComponent()
-                            .setPosition(LEFT_CONTROL_PANEL_POSITION)
-                            .setScaleVector(Vector3(CONTROL_PANEL_SCALE)),
-                    )
+                    leftPanelState.applyTransform(panel)
                     content.addEntity(panel)
                 }
                 attachments.entity(RIGHT_CONTROL_PANEL_ATTACHMENT_ID)?.let { panel ->
-                    panel.components.set(
-                        TransformComponent()
-                            .setPosition(RIGHT_CONTROL_PANEL_POSITION)
-                            .setScaleVector(Vector3(CONTROL_PANEL_SCALE)),
-                    )
+                    rightPanelState.applyTransform(panel)
                     content.addEntity(panel)
                 }
             },
@@ -164,12 +161,17 @@ fun DrawerHomeScreen(modifier: Modifier = Modifier) {
                 ) {
                     HandBrushPanel(
                         title = "左手画笔",
+                        collapsed = leftPanelState.collapsed,
                         selectedColor = leftSelectedColor,
                         selectedSize = leftSelectedSize,
                         selectedMode = leftSelectedMode,
                         onColorSelected = { leftSelectedColor = it },
                         onSizeSelected = { leftSelectedSize = it },
                         onModeSelected = { leftSelectedMode = it },
+                        onCollapseRequest = {
+                            leftPanelInteracting = false
+                            leftPanelState.collapse()
+                        },
                         onInteractionChanged = { leftPanelInteracting = it },
                     )
                 }
@@ -178,18 +180,33 @@ fun DrawerHomeScreen(modifier: Modifier = Modifier) {
                 ) {
                     HandBrushPanel(
                         title = "右手画笔",
+                        collapsed = rightPanelState.collapsed,
                         selectedColor = rightSelectedColor,
                         selectedSize = rightSelectedSize,
                         selectedMode = rightSelectedMode,
                         onColorSelected = { rightSelectedColor = it },
                         onSizeSelected = { rightSelectedSize = it },
                         onModeSelected = { rightSelectedMode = it },
+                        onCollapseRequest = {
+                            rightPanelInteracting = false
+                            rightPanelState.collapse()
+                        },
                         onInteractionChanged = { rightPanelInteracting = it },
                         onClear = { paintScene.clear() },
                     )
                 }
             },
-            update = { _, _ ->
+            update = { _, attachments ->
+                leftPanelState.update(
+                    panel = attachments.entity(LEFT_CONTROL_PANEL_ATTACHMENT_ID),
+                    handPose = handTrackingData.left,
+                    worldToScene = { point -> paintScene.worldToSceneLocal(point) },
+                )
+                rightPanelState.update(
+                    panel = attachments.entity(RIGHT_CONTROL_PANEL_ATTACHMENT_ID),
+                    handPose = handTrackingData.right,
+                    worldToScene = { point -> paintScene.worldToSceneLocal(point) },
+                )
                 paintScene.update(handTrackingData)
             },
         )
@@ -199,12 +216,14 @@ fun DrawerHomeScreen(modifier: Modifier = Modifier) {
 @Composable
 private fun HandBrushPanel(
     title: String,
+    collapsed: Boolean,
     selectedColor: BrushColorState,
     selectedSize: BrushSizePreset,
     selectedMode: BrushMode,
     onColorSelected: (BrushColorState) -> Unit,
     onSizeSelected: (BrushSizePreset) -> Unit,
     onModeSelected: (BrushMode) -> Unit,
+    onCollapseRequest: () -> Unit,
     onInteractionChanged: (Boolean) -> Unit,
     onClear: (() -> Unit)? = null,
 ) {
@@ -212,10 +231,65 @@ private fun HandBrushPanel(
         onDispose { onInteractionChanged(false) }
     }
 
+    DisposableEffect(collapsed) {
+        if (collapsed) {
+            onInteractionChanged(false)
+        }
+        onDispose { }
+    }
+
+    val panelWidth by animateDpAsState(
+        targetValue = if (collapsed) COLLAPSED_PANEL_SIZE_DP else CONTROL_PANEL_WIDTH_DP,
+        animationSpec = composeTween(durationMillis = 220),
+        label = "panel_width",
+    )
+
+    Box(modifier = Modifier.width(panelWidth)) {
+        Crossfade(
+            targetState = collapsed,
+            animationSpec = composeTween(durationMillis = 220),
+            label = "panel_mode",
+        ) { isCollapsed ->
+            if (isCollapsed) {
+                CollapsedHandOrb(
+                    title = title,
+                    color = selectedColor.uiColor,
+                )
+            } else {
+                ExpandedHandBrushPanel(
+                    title = title,
+                    selectedColor = selectedColor,
+                    selectedSize = selectedSize,
+                    selectedMode = selectedMode,
+                    onColorSelected = onColorSelected,
+                    onSizeSelected = onSizeSelected,
+                    onModeSelected = onModeSelected,
+                    onCollapseRequest = onCollapseRequest,
+                    onInteractionChanged = onInteractionChanged,
+                    onClear = onClear,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ExpandedHandBrushPanel(
+    title: String,
+    selectedColor: BrushColorState,
+    selectedSize: BrushSizePreset,
+    selectedMode: BrushMode,
+    onColorSelected: (BrushColorState) -> Unit,
+    onSizeSelected: (BrushSizePreset) -> Unit,
+    onModeSelected: (BrushMode) -> Unit,
+    onCollapseRequest: () -> Unit,
+    onInteractionChanged: (Boolean) -> Unit,
+    onClear: (() -> Unit)? = null,
+) {
     Column(
         modifier =
             Modifier
-                .width(320.dp)
+                .width(CONTROL_PANEL_WIDTH_DP)
                 .background(Color(0xCC1B1D24))
                 .pointerInput(Unit) {
                     awaitEachGesture {
@@ -236,9 +310,18 @@ private fun HandBrushPanel(
         verticalArrangement = Arrangement.spacedBy(8.dp),
         horizontalAlignment = Alignment.Start,
     ) {
-        Text(text = title, style = PicoTheme.typography.titleLarge, color = Color.White)
+        Row(
+            modifier = Modifier.width(CONTROL_PANEL_WIDTH_DP - 36.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(text = title, style = PicoTheme.typography.titleLarge, color = Color.White)
+            Button(onClick = onCollapseRequest) {
+                Text(text = "缩小")
+            }
+        }
         Text(
-            text = "短 pinch 点面板，长 pinch 开始绘画。",
+            text = "短 pinch 点面板，长 pinch 开始绘画。拇指碰小拇指可再次展开。",
             style = PicoTheme.typography.bodyMedium,
             color = Color.White,
         )
@@ -280,6 +363,44 @@ private fun HandBrushPanel(
                 Text(text = "Clear Stroke")
             }
         }
+    }
+}
+
+@Composable
+private fun CollapsedHandOrb(
+    title: String,
+    color: Color,
+) {
+    Box(
+        modifier =
+            Modifier
+                .size(COLLAPSED_PANEL_SIZE_DP)
+                .background(color.copy(alpha = 0.20f), CircleShape)
+                .border(2.dp, Color.White.copy(alpha = 0.86f), CircleShape),
+        contentAlignment = Alignment.Center,
+    ) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            drawCircle(
+                color = color.copy(alpha = 0.22f),
+                radius = size.minDimension * 0.48f,
+                center = center,
+            )
+            drawCircle(
+                color = color.copy(alpha = 0.40f),
+                radius = size.minDimension * 0.34f,
+                center = center,
+            )
+            drawCircle(
+                color = Color.White.copy(alpha = 0.92f),
+                radius = size.minDimension * 0.18f,
+                center = center,
+            )
+        }
+        Text(
+            text = title.take(1),
+            style = PicoTheme.typography.bodyMedium,
+            color = Color.White,
+        )
     }
 }
 
@@ -644,6 +765,8 @@ private class PaintSceneState {
         rightStroke.update(handTrackingData.right, sceneRoot, rightInput.shouldDraw)
     }
 
+    fun worldToSceneLocal(point: Vector3): Vector3 = sceneRoot.convertPositionFrom(point, null)
+
     fun setBrushConfig(
         handSide: HandSide,
         config: BrushConfig,
@@ -832,6 +955,66 @@ private enum class BrushMode {
 private enum class HandSide {
     Left,
     Right,
+}
+
+private class HandPanelState(
+    private val handSide: HandSide,
+    initialExpandedPosition: Vector3,
+) {
+    var collapsed by mutableStateOf(false)
+        private set
+
+    private var currentPosition = initialExpandedPosition
+    private var expandedPosition = initialExpandedPosition
+    private var currentScale = CONTROL_PANEL_SCALE
+    private var expandGestureLatched = false
+
+    fun collapse() {
+        collapsed = true
+    }
+
+    fun applyTransform(panel: Entity) {
+        panel.components.set(
+            TransformComponent()
+                .setPosition(currentPosition)
+                .setScaleVector(Vector3(currentScale)),
+        )
+    }
+
+    fun update(
+        panel: Entity?,
+        handPose: HandPose?,
+        worldToScene: (Vector3) -> Vector3,
+    ) {
+        panel ?: return
+
+        val toggleGestureActive =
+            handPose?.thumbLittleDistance()?.let { it <= PANEL_EXPAND_GESTURE_DISTANCE_M } == true
+        if (toggleGestureActive && !expandGestureLatched) {
+            if (collapsed) {
+                handPose?.let { expandedHandPose ->
+                    expandedPosition = worldToScene(expandedHandPose.expandedPanelWorldPosition())
+                    collapsed = false
+                }
+            } else {
+                collapsed = true
+            }
+        }
+        expandGestureLatched = toggleGestureActive
+
+        val targetPosition =
+            when {
+                collapsed && handPose != null -> worldToScene(handPose.collapsedOrbWorldPosition())
+                else -> expandedPosition
+            }
+        val targetScale = if (collapsed) COLLAPSED_PANEL_WORLD_SCALE else CONTROL_PANEL_SCALE
+
+        currentPosition = Vector3.lerp(currentPosition, targetPosition, PANEL_TRANSFORM_LERP)
+        currentScale = lerp(currentScale, targetScale, PANEL_TRANSFORM_LERP)
+
+        panel.enabled = !collapsed || handPose != null
+        applyTransform(panel)
+    }
 }
 
 private class HandDrawInputState(
@@ -1857,6 +2040,29 @@ private fun HandPose.pinchCenter(): Vector3 {
     return (indexTip.position + thumbTip.position) / 2f
 }
 
+private fun HandPose.thumbLittleDistance(): Float {
+    val thumbTip = this[HandJoint.Index.THUMB_TIP]
+    val littleTip = this[HandJoint.Index.LITTLE_TIP]
+    return Vector3.distance(thumbTip.position, littleTip.position)
+}
+
+private fun HandPose.panelForwardDirection(): Vector3 {
+    val wrist = this[HandJoint.Index.WRIST].position
+    val palm = this[HandJoint.Index.PALM].position
+    val middle = this[HandJoint.Index.MIDDLE_PROXIMAL].position
+    return safeNormalize((palm - wrist) + (middle - palm), Vector3.FORWARD)
+}
+
+private fun HandPose.collapsedOrbWorldPosition(): Vector3 {
+    val palm = this[HandJoint.Index.PALM].position
+    return palm + panelForwardDirection() * PANEL_ORB_FORWARD_OFFSET_M
+}
+
+private fun HandPose.expandedPanelWorldPosition(): Vector3 {
+    val palm = this[HandJoint.Index.PALM].position
+    return palm + panelForwardDirection() * PANEL_EXPANDED_FORWARD_OFFSET_M
+}
+
 private fun HandPose.pinchDistance(): Float {
     val indexTip = this[HandJoint.Index.INDEX_TIP]
     val thumbTip = this[HandJoint.Index.THUMB_TIP]
@@ -1939,6 +2145,13 @@ private const val RIGHT_CONTROL_PANEL_ATTACHMENT_ID = "right_brush_control_panel
 private val LEFT_CONTROL_PANEL_POSITION = Vector3(-0.38f, 1.12f, -0.58f)
 private val RIGHT_CONTROL_PANEL_POSITION = Vector3(0.38f, 1.12f, -0.58f)
 private const val CONTROL_PANEL_SCALE = 1.0f
+private val CONTROL_PANEL_WIDTH_DP = 320.dp
+private val COLLAPSED_PANEL_SIZE_DP = 72.dp
+private const val COLLAPSED_PANEL_WORLD_SCALE = 0.32f
+private const val PANEL_TRANSFORM_LERP = 0.22f
+private const val PANEL_ORB_FORWARD_OFFSET_M = 0.05f
+private const val PANEL_EXPANDED_FORWARD_OFFSET_M = 0.15f
+private const val PANEL_EXPAND_GESTURE_DISTANCE_M = 0.028f
 private val DEFAULT_LEFT_BRUSH_COLOR = BrushColorState.fromUiColor(Color(0xFF4E8CFF))
 private val DEFAULT_RIGHT_BRUSH_COLOR = BrushColorState.fromUiColor(Color(0xFFFF7A59))
 private val HUE_TRACK_COLORS =
