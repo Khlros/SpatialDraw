@@ -236,12 +236,14 @@ private fun HandBrushPanel(
         verticalArrangement = Arrangement.spacedBy(8.dp),
         horizontalAlignment = Alignment.Start,
     ) {
-        Text(text = title, style = PicoTheme.typography.titleLarge)
+        Text(text = title, style = PicoTheme.typography.titleLarge, color = Color.White)
         Text(
             text = "短 pinch 点面板，长 pinch 开始绘画。",
             style = PicoTheme.typography.bodyMedium,
+            color = Color.White,
         )
 
+        Text(text = "样式", style = PicoTheme.typography.titleMedium, color = Color.White)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             BrushOptionButton(
                 label = "动态线",
@@ -249,12 +251,13 @@ private fun HandBrushPanel(
                 onClick = { onModeSelected(BrushMode.Tube) },
             )
             BrushOptionButton(
-                label = "圆球点阵",
+                label = "圆球虚线",
                 selected = selectedMode == BrushMode.SphereSteps,
                 onClick = { onModeSelected(BrushMode.SphereSteps) },
             )
         }
 
+        Text(text = "大小", style = PicoTheme.typography.titleMedium, color = Color.White)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             BrushSizePreset.entries.forEach { size ->
                 BrushSizeOptionButton(
@@ -266,15 +269,10 @@ private fun HandBrushPanel(
             }
         }
 
-        Text(text = "颜色", style = PicoTheme.typography.titleMedium)
+        Text(text = "颜色", style = PicoTheme.typography.titleMedium, color = Color.White)
         TripleColorTrackPalette(
             selectedColor = selectedColor,
             onColorSelected = onColorSelected,
-        )
-
-        Text(
-            text = "圆球点阵模式下，轨迹至少移动 10cm 才会再落下一颗球。",
-            style = PicoTheme.typography.bodyMedium,
         )
 
         onClear?.let { clearAction ->
@@ -360,6 +358,7 @@ private fun TripleColorTrackPalette(
                 text =
                     "H ${selectedColor.hue.roundToInt()}  S ${(selectedColor.saturation * 100f).roundToInt()}  V ${(selectedColor.value * 100f).roundToInt()}",
                 style = PicoTheme.typography.bodyMedium,
+                color = Color.White,
             )
         }
     }
@@ -393,8 +392,8 @@ private fun ColorTrackSlider(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(text = label, style = PicoTheme.typography.bodyMedium)
-            Text(text = valueText, style = PicoTheme.typography.bodyMedium)
+            Text(text = label, style = PicoTheme.typography.bodyMedium, color = Color.White)
+            Text(text = valueText, style = PicoTheme.typography.bodyMedium, color = Color.White)
         }
 
         Box(
