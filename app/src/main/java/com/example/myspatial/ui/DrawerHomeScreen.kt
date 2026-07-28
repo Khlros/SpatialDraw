@@ -971,11 +971,12 @@ private class DynamicTubeStroke(
     private val cumulativeLengths = mutableListOf<Float>()
     private var dynamicStartIndex = 0
     private var nextFreezeTriggerLengthM = INITIAL_FREEZE_TRIGGER_LENGTH_M
-    private val frozenRings = mutableListOf<TubeRing>()
-    private var frozenMeshSection: TubeMeshSection? = null
+    private val frozenChunks = mutableListOf<FrozenTubeChunk>()
+    private var lastFrozenRing: TubeRing? = null
     private var dynamicAnchorProfile: StrokeProfile? = null
     private var dynamicMeshResource: MeshResource? = null
     private var dynamicMeshEntity: ModelEntity? = null
+    private var lastMeshUpdateRealtimeMs = 0L
 
     override val lastPoint: Vector3?
         get() = sampledPoints.lastOrNull()
@@ -984,7 +985,7 @@ private class DynamicTubeStroke(
         get() = sampledPoints.size * STROKE_RING_SIDES
 
     override val hasRenderableMesh: Boolean
-        get() = dynamicMeshEntity != null
+        get() = dynamicMeshEntity != null || frozenChunks.isNotEmpty()
 
     init {
         parent.addChild(strokeRoot)
@@ -1017,13 +1018,13 @@ private class DynamicTubeStroke(
         }
 
         if (changed && sampledPoints.size >= 2) {
-            updateMeshes()
+            requestMeshUpdate()
         }
     }
 
     override fun finish() {
         if (sampledPoints.size >= 2) {
-            updateMeshes()
+            requestMeshUpdate(force = true)
         }
     }
 
@@ -1032,10 +1033,28 @@ private class DynamicTubeStroke(
         dynamicMeshEntity = null
         dynamicMeshResource?.close()
         dynamicMeshResource = null
-        frozenRings.clear()
-        frozenMeshSection = null
+        frozenChunks.forEach { chunk ->
+            strokeRoot.removeChild(chunk.entity)
+            chunk.resource.close()
+        }
+        frozenChunks.clear()
+        lastFrozenRing = null
         dynamicAnchorProfile = null
         parent.removeChild(strokeRoot)
+    }
+
+    private fun requestMeshUpdate(force: Boolean = false) {
+        val now = SystemClock.elapsedRealtime()
+        val shouldUpdateNow =
+            force ||
+                dynamicMeshEntity == null ||
+                now - lastMeshUpdateRealtimeMs >= MESH_UPDATE_THROTTLE_MS
+        if (!shouldUpdateNow) {
+            return
+        }
+
+        updateMeshes()
+        lastMeshUpdateRealtimeMs = now
     }
 
     private fun updateMeshes() {
@@ -1046,17 +1065,7 @@ private class DynamicTubeStroke(
             dynamicRings = buildDynamicRings(dynamicWindowProfile)
         }
         val meshData =
-            when {
-                frozenMeshSection != null && dynamicRings != null ->
-                    buildCombinedTubeMeshFromRings(
-                        frozenSection = frozenMeshSection!!,
-                        dynamicRings = dynamicRings,
-                        radius = radius,
-                    )
-                frozenMeshSection != null -> buildTubeMeshDataFromSection(frozenMeshSection!!)
-                dynamicRings != null -> buildTubeMeshDataFromRings(dynamicRings, radius)
-                else -> null
-            }
+            dynamicRings?.let { buildTubeMeshDataFromRings(it, radius) }
         if (meshData == null) {
             dynamicMeshEntity?.let { strokeRoot.removeChild(it) }
             dynamicMeshEntity = null
@@ -1083,12 +1092,12 @@ private class DynamicTubeStroke(
             return null
         }
 
-        return if (frozenRings.isEmpty()) {
+        return if (lastFrozenRing == null) {
             buildTubeRingsFromProfile(profile)
         } else {
             buildTubeRingsFromProfile(
                 profile = profile,
-                initialRing = frozenRings.last(),
+                initialRing = lastFrozenRing,
             )
         }
     }
@@ -1163,7 +1172,7 @@ private class DynamicTubeStroke(
         anchorEndIndex = maxOf(anchorEndIndex, splitIndex + 1)
 
         val ringsToFreeze =
-            if (frozenRings.isEmpty()) {
+            if (lastFrozenRing == null) {
                 nonNullDynamicRings.take(splitIndex + 1)
             } else {
                 nonNullDynamicRings.drop(1).take(splitIndex)
@@ -1172,12 +1181,35 @@ private class DynamicTubeStroke(
             return false
         }
 
-        frozenRings.addAll(ringsToFreeze)
+        appendFrozenChunk(
+            if (lastFrozenRing == null) {
+                ringsToFreeze
+            } else {
+                listOf(lastFrozenRing!!) + ringsToFreeze
+            },
+        )
+        lastFrozenRing = ringsToFreeze.last()
         dynamicAnchorProfile = sliceStrokeProfile(nonNullProfile, splitIndex, anchorEndIndex)
-        frozenMeshSection = buildTubeMeshSectionFromRings(frozenRings, radius)
         dynamicStartIndex = latestStableIndex
         nextFreezeTriggerLengthM += FREEZE_TRIGGER_INTERVAL_M
         return true
+    }
+
+    private fun appendFrozenChunk(chunkRings: List<TubeRing>) {
+        if (chunkRings.size < 2) {
+            return
+        }
+
+        val chunkIndex = frozenChunks.size
+        val chunkName = "${strokeName}_chunk_$chunkIndex"
+        val meshData = buildTubeMeshDataFromRings(chunkRings, radius)
+        val resource = MeshResource.createWithMeshModel(meshData.model, meshData.bounds, chunkName)
+        val entity =
+            ModelEntity(resource, material).apply {
+                setName(chunkName)
+            }
+        strokeRoot.addChild(entity)
+        frozenChunks.add(FrozenTubeChunk(resource = resource, entity = entity))
     }
 
     private fun findLatestStableIndex(): Int {
@@ -1284,6 +1316,11 @@ private data class TubeMeshData(
     val bounds: BoundingBox,
 )
 
+private data class FrozenTubeChunk(
+    val resource: MeshResource,
+    val entity: ModelEntity,
+)
+
 private data class TubeRing(
     val center: Vector3,
     val radiusScale: Float,
@@ -1297,6 +1334,7 @@ private data class TubeMeshSection(
     val normals: List<Vector3>,
     val uv0: List<Vector2>,
     val indices: List<Int>,
+    val bounds: BoundingBox,
 )
 
 private data class StrokeProfile(
@@ -1369,6 +1407,12 @@ private fun buildTubeMeshSectionFromRings(
     val normals = mutableListOf<Vector3>()
     val uv0 = mutableListOf<Vector2>()
     val indices = mutableListOf<Int>()
+    var minX = Float.POSITIVE_INFINITY
+    var minY = Float.POSITIVE_INFINITY
+    var minZ = Float.POSITIVE_INFINITY
+    var maxX = Float.NEGATIVE_INFINITY
+    var maxY = Float.NEGATIVE_INFINITY
+    var maxZ = Float.NEGATIVE_INFINITY
 
     for (pointIndex in rings.indices) {
         val ring = rings[pointIndex]
@@ -1379,9 +1423,16 @@ private fun buildTubeMeshSectionFromRings(
             val angle = TAU_F * side.toFloat() / STROKE_RING_SIDES.toFloat()
             val radial =
                 (ring.normal * cos(angle) + ring.binormal * sin(angle)).normalize()
-            positions.add(point + radial * ringRadius)
+            val vertex = point + radial * ringRadius
+            positions.add(vertex)
             normals.add(radial)
             uv0.add(Vector2(side.toFloat() / STROKE_RING_SIDES.toFloat(), ring.v))
+            minX = minOf(minX, vertex.x)
+            minY = minOf(minY, vertex.y)
+            minZ = minOf(minZ, vertex.z)
+            maxX = maxOf(maxX, vertex.x)
+            maxY = maxOf(maxY, vertex.y)
+            maxZ = maxOf(maxZ, vertex.z)
         }
     }
 
@@ -1410,43 +1461,17 @@ private fun buildTubeMeshSectionFromRings(
         normals = normals,
         uv0 = uv0,
         indices = indices,
+        bounds =
+            BoundingBox(
+                Vector3(minX, minY, minZ),
+                Vector3(maxX, maxY, maxZ),
+            ),
     )
 }
 
 private fun buildTubeMeshDataFromSection(section: TubeMeshSection): TubeMeshData {
     val model = MeshModel(section.positions, section.indices, section.normals, uv0 = section.uv0)
-    val bounds = computeBoundingBox(section.positions)
-    return TubeMeshData(model = model, bounds = bounds)
-}
-
-private fun buildCombinedTubeMeshFromRings(
-    frozenSection: TubeMeshSection,
-    dynamicRings: List<TubeRing>,
-    radius: Float,
-): TubeMeshData {
-    if (dynamicRings.isEmpty()) {
-        return buildTubeMeshDataFromSection(frozenSection)
-    }
-    val dynamicSection = buildTubeMeshSectionFromRings(dynamicRings, radius)
-    if (dynamicSection.positions.size < STROKE_RING_SIDES) {
-        return buildTubeMeshDataFromSection(frozenSection)
-    }
-
-    val positions = frozenSection.positions + dynamicSection.positions.drop(STROKE_RING_SIDES)
-    val normals = frozenSection.normals + dynamicSection.normals.drop(STROKE_RING_SIDES)
-    val uv0 = frozenSection.uv0 + dynamicSection.uv0.drop(STROKE_RING_SIDES)
-    val indices = mutableListOf<Int>()
-    indices.addAll(frozenSection.indices)
-    val dynamicIndexOffset = frozenSection.positions.size - STROKE_RING_SIDES
-    indices.addAll(dynamicSection.indices.map { it + dynamicIndexOffset })
-    return buildTubeMeshDataFromSection(
-        TubeMeshSection(
-            positions = positions,
-            normals = normals,
-            uv0 = uv0,
-            indices = indices,
-        ),
-    )
+    return TubeMeshData(model = model, bounds = section.bounds)
 }
 
 private fun sliceStrokeProfile(
@@ -1769,29 +1794,6 @@ private fun smoothstep(value: Float): Float {
     return t * t * (3f - 2f * t)
 }
 
-private fun computeBoundingBox(positions: List<Vector3>): BoundingBox {
-    var minX = positions.first().x
-    var minY = positions.first().y
-    var minZ = positions.first().z
-    var maxX = minX
-    var maxY = minY
-    var maxZ = minZ
-
-    for (position in positions.drop(1)) {
-        minX = minOf(minX, position.x)
-        minY = minOf(minY, position.y)
-        minZ = minOf(minZ, position.z)
-        maxX = maxOf(maxX, position.x)
-        maxY = maxOf(maxY, position.y)
-        maxZ = maxOf(maxZ, position.z)
-    }
-
-    return BoundingBox(
-        Vector3(minX, minY, minZ),
-        Vector3(maxX, maxY, maxZ),
-    )
-}
-
 private fun safeNormalize(
     vector: Vector3,
     fallback: Vector3,
@@ -1926,6 +1928,7 @@ private const val MIN_PROFILE_POINTS_PER_CHUNK = 6
 private const val MIN_PROFILE_POINTS_AFTER_SPLIT = 4
 private const val PROFILE_OVERLAP_SEARCH_POINT_COUNT = 12
 private const val PROFILE_OVERLAP_DISTANCE_THRESHOLD_M = 0.03f
+private const val MESH_UPDATE_THROTTLE_MS = 33L
 private const val THIN_STROKE_SCALE = 0.42f
 private const val END_TRANSITION_DISTANCE_M = 0.10f
 private const val END_CAP_LENGTH_M = 0.018f
