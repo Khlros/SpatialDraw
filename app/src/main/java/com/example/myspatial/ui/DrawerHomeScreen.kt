@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -94,10 +95,10 @@ fun DrawerHomeScreen(modifier: Modifier = Modifier) {
     var leftPanelInteracting by remember { mutableStateOf(false) }
     var rightPanelInteracting by remember { mutableStateOf(false) }
     var leftSelectedColor by remember { mutableStateOf(DEFAULT_LEFT_BRUSH_COLOR) }
-    var leftSelectedSize by remember { mutableStateOf(BrushSizePreset.Medium) }
+    var leftBrushRadius by remember { mutableStateOf(DEFAULT_BRUSH_RADIUS_M) }
     var leftSelectedMode by remember { mutableStateOf(BrushMode.Tube) }
     var rightSelectedColor by remember { mutableStateOf(DEFAULT_RIGHT_BRUSH_COLOR) }
-    var rightSelectedSize by remember { mutableStateOf(BrushSizePreset.Medium) }
+    var rightBrushRadius by remember { mutableStateOf(DEFAULT_BRUSH_RADIUS_M) }
     var rightSelectedMode by remember { mutableStateOf(BrushMode.Tube) }
 
     paintScene.setBrushConfig(
@@ -105,7 +106,16 @@ fun DrawerHomeScreen(modifier: Modifier = Modifier) {
         config =
             BrushConfig(
                 color = leftSelectedColor.toColor4(),
-                radius = leftSelectedSize.radius,
+                radius = leftBrushRadius,
+                mode = leftSelectedMode,
+            ),
+    )
+    paintScene.setBrushPreviewStyle(
+        handSide = HandSide.Left,
+        style =
+            BrushPreviewStyle(
+                color = leftSelectedColor,
+                radius = leftBrushRadius,
                 mode = leftSelectedMode,
             ),
     )
@@ -114,7 +124,16 @@ fun DrawerHomeScreen(modifier: Modifier = Modifier) {
         config =
             BrushConfig(
                 color = rightSelectedColor.toColor4(),
-                radius = rightSelectedSize.radius,
+                radius = rightBrushRadius,
+                mode = rightSelectedMode,
+            ),
+    )
+    paintScene.setBrushPreviewStyle(
+        handSide = HandSide.Right,
+        style =
+            BrushPreviewStyle(
+                color = rightSelectedColor,
+                radius = rightBrushRadius,
                 mode = rightSelectedMode,
             ),
     )
@@ -163,10 +182,10 @@ fun DrawerHomeScreen(modifier: Modifier = Modifier) {
                         title = "左手画笔",
                         collapsed = leftPanelState.collapsed,
                         selectedColor = leftSelectedColor,
-                        selectedSize = leftSelectedSize,
+                        brushRadius = leftBrushRadius,
                         selectedMode = leftSelectedMode,
                         onColorSelected = { leftSelectedColor = it },
-                        onSizeSelected = { leftSelectedSize = it },
+                        onBrushRadiusChange = { leftBrushRadius = it },
                         onModeSelected = { leftSelectedMode = it },
                         onCollapseRequest = {
                             leftPanelInteracting = false
@@ -183,10 +202,10 @@ fun DrawerHomeScreen(modifier: Modifier = Modifier) {
                         title = "右手画笔",
                         collapsed = rightPanelState.collapsed,
                         selectedColor = rightSelectedColor,
-                        selectedSize = rightSelectedSize,
+                        brushRadius = rightBrushRadius,
                         selectedMode = rightSelectedMode,
                         onColorSelected = { rightSelectedColor = it },
-                        onSizeSelected = { rightSelectedSize = it },
+                        onBrushRadiusChange = { rightBrushRadius = it },
                         onModeSelected = { rightSelectedMode = it },
                         onCollapseRequest = {
                             rightPanelInteracting = false
@@ -209,7 +228,14 @@ fun DrawerHomeScreen(modifier: Modifier = Modifier) {
                     handPose = handTrackingData.right,
                     worldToScene = { point -> paintScene.worldToSceneLocal(point) },
                 )
-                paintScene.update(handTrackingData)
+                paintScene.update(
+                    handTrackingData = handTrackingData,
+                    allowInstantPinchDrawing = leftPanelState.collapsed && rightPanelState.collapsed,
+                    leftPanel = attachments.entity(LEFT_CONTROL_PANEL_ATTACHMENT_ID),
+                    leftPanelCollapsed = leftPanelState.collapsed,
+                    rightPanel = attachments.entity(RIGHT_CONTROL_PANEL_ATTACHMENT_ID),
+                    rightPanelCollapsed = rightPanelState.collapsed,
+                )
             },
         )
     }
@@ -220,10 +246,10 @@ private fun HandBrushPanel(
     title: String,
     collapsed: Boolean,
     selectedColor: BrushColorState,
-    selectedSize: BrushSizePreset,
+    brushRadius: Float,
     selectedMode: BrushMode,
     onColorSelected: (BrushColorState) -> Unit,
-    onSizeSelected: (BrushSizePreset) -> Unit,
+    onBrushRadiusChange: (Float) -> Unit,
     onModeSelected: (BrushMode) -> Unit,
     onCollapseRequest: () -> Unit,
     onInteractionChanged: (Boolean) -> Unit,
@@ -262,10 +288,10 @@ private fun HandBrushPanel(
                 ExpandedHandBrushPanel(
                     title = title,
                     selectedColor = selectedColor,
-                    selectedSize = selectedSize,
+                    brushRadius = brushRadius,
                     selectedMode = selectedMode,
                     onColorSelected = onColorSelected,
-                    onSizeSelected = onSizeSelected,
+                    onBrushRadiusChange = onBrushRadiusChange,
                     onModeSelected = onModeSelected,
                     onCollapseRequest = onCollapseRequest,
                     onInteractionChanged = onInteractionChanged,
@@ -281,10 +307,10 @@ private fun HandBrushPanel(
 private fun ExpandedHandBrushPanel(
     title: String,
     selectedColor: BrushColorState,
-    selectedSize: BrushSizePreset,
+    brushRadius: Float,
     selectedMode: BrushMode,
     onColorSelected: (BrushColorState) -> Unit,
-    onSizeSelected: (BrushSizePreset) -> Unit,
+    onBrushRadiusChange: (Float) -> Unit,
     onModeSelected: (BrushMode) -> Unit,
     onCollapseRequest: () -> Unit,
     onInteractionChanged: (Boolean) -> Unit,
@@ -326,7 +352,7 @@ private fun ExpandedHandBrushPanel(
             }
         }
         Text(
-            text = "短 pinch 点面板，长 pinch 开始绘画。拇指碰小拇指可再次展开。",
+            text = "双侧都缩小时，直接 pinch 即可绘画；面板展开时仍需 long pinch。拇指碰小拇指可展开或收起。",
             style = PicoTheme.typography.bodyMedium,
             color = Color.White,
         )
@@ -346,16 +372,15 @@ private fun ExpandedHandBrushPanel(
         }
 
         Text(text = "大小", style = PicoTheme.typography.titleMedium, color = Color.White)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            BrushSizePreset.entries.forEach { size ->
-                BrushSizeOptionButton(
-                    label = size.label,
-                    dotSize = size.dotSize,
-                    selected = selectedSize == size,
-                    onClick = { onSizeSelected(size) },
-                )
-            }
-        }
+        BrushSizeControl(
+            radius = brushRadius,
+            onRadiusChange = onBrushRadiusChange,
+        )
+        Text(
+            text = "面板前方会显示实时 3D 笔迹预览",
+            style = PicoTheme.typography.bodyMedium,
+            color = Color.White.copy(alpha = 0.78f),
+        )
 
         Text(text = "颜色", style = PicoTheme.typography.titleMedium, color = Color.White)
         TripleColorTrackPalette(
@@ -503,10 +528,14 @@ private fun ColorTrackSlider(
     valueText: String,
     knobColor: Color,
     gradientColors: List<Color>,
+    trackWidth: Dp = COLOR_TRACK_WIDTH_DP,
     onValueChange: (Float) -> Unit,
 ) {
     val density = LocalDensity.current
     val trackHeightPx = with(density) { COLOR_TRACK_HEIGHT_DP.toPx() }
+    val trackHorizontalPaddingPx = with(density) { COLOR_TRACK_HORIZONTAL_PADDING_DP.toPx() }
+    val trackDrawWidthDp = trackWidth - COLOR_TRACK_HORIZONTAL_PADDING_DP * 2f
+    val trackDrawWidthPx = with(density) { trackDrawWidthDp.toPx() }
     var isDragging by remember { mutableStateOf(false) }
 
     DisposableEffect(Unit) {
@@ -520,7 +549,7 @@ private fun ColorTrackSlider(
         horizontalAlignment = Alignment.Start,
     ) {
         Row(
-            modifier = Modifier.width(COLOR_TRACK_WIDTH_DP),
+            modifier = Modifier.width(trackWidth),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -531,7 +560,7 @@ private fun ColorTrackSlider(
         Box(
             modifier =
                 Modifier
-                    .size(width = COLOR_TRACK_WIDTH_DP, height = COLOR_TRACK_TOUCH_HEIGHT_DP)
+                    .size(width = trackWidth, height = COLOR_TRACK_TOUCH_HEIGHT_DP)
                     .spatialHoverEffect {
                         val isActive = it.isActive
                         animation(tween(durationMillis = 160)) {
@@ -548,7 +577,7 @@ private fun ColorTrackSlider(
                                 isDragging = pressed
                                 if (pressed) {
                                     val normalized =
-                                        ((change.position.x - COLOR_TRACK_HORIZONTAL_PADDING_PX) / COLOR_TRACK_DRAW_WIDTH_PX)
+                                        ((change.position.x - trackHorizontalPaddingPx) / trackDrawWidthPx)
                                             .coerceIn(0f, 1f)
                                     onValueChange(normalized)
                                     event.changes.forEach { pointerChange ->
@@ -568,12 +597,14 @@ private fun ColorTrackSlider(
                     value = value,
                     trackHeightPx = trackHeightPx,
                     gradientColors = gradientColors,
+                    trackHorizontalPaddingPx = trackHorizontalPaddingPx,
                 )
             }
             ColorTrackKnob(
                 value = value,
                 color = knobColor,
                 dragging = isDragging,
+                trackWidth = trackWidth,
             )
         }
     }
@@ -583,10 +614,11 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawColorTrack(
     value: Float,
     trackHeightPx: Float,
     gradientColors: List<Color>,
+    trackHorizontalPaddingPx: Float,
 ) {
     val trackTop = (size.height - trackHeightPx) * 0.5f
-    val trackLeft = COLOR_TRACK_HORIZONTAL_PADDING_PX
-    val trackWidth = size.width - COLOR_TRACK_HORIZONTAL_PADDING_PX * 2f
+    val trackLeft = trackHorizontalPaddingPx
+    val trackWidth = size.width - trackHorizontalPaddingPx * 2f
     val trackCorner = CornerRadius(trackHeightPx * 0.5f)
 
     drawRoundRect(
@@ -609,10 +641,12 @@ private fun ColorTrackKnob(
     value: Float,
     color: Color,
     dragging: Boolean,
+    trackWidth: Dp = COLOR_TRACK_WIDTH_DP,
 ) {
     val knobDiameter = COLOR_TRACK_KNOB_DIAMETER_DP
     val knobHitSize = COLOR_TRACK_KNOB_HIT_SIZE_DP
-    val knobCenterX = COLOR_TRACK_HORIZONTAL_PADDING_DP + COLOR_TRACK_DRAW_WIDTH_DP * value.coerceIn(0f, 1f)
+    val knobCenterX =
+        COLOR_TRACK_HORIZONTAL_PADDING_DP + (trackWidth - COLOR_TRACK_HORIZONTAL_PADDING_DP * 2f) * value.coerceIn(0f, 1f)
     val knobOffsetX = knobCenterX - knobHitSize / 2f
     val knobOffsetY = COLOR_TRACK_TOUCH_HEIGHT_DP / 2f - knobHitSize / 2f
 
@@ -681,41 +715,47 @@ private fun BrushOptionButton(
 }
 
 @Composable
-private fun BrushSizeOptionButton(
-    label: String,
-    dotSize: Dp,
-    selected: Boolean,
-    onClick: () -> Unit,
+private fun BrushSizeControl(
+    radius: Float,
+    onRadiusChange: (Float) -> Unit,
 ) {
-    Button(onClick = onClick) {
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Box(
-                modifier =
-                    Modifier
-                        .size(18.dp)
-                        .border(1.dp, Color(0x55FFFFFF), CircleShape)
-                        .background(Color.Transparent, CircleShape),
-                contentAlignment = Alignment.Center,
-            ) {
-                Box(
-                    modifier =
-                        Modifier
-                            .size(dotSize)
-                            .background(Color.White, CircleShape),
-                )
-            }
-            Text(text = if (selected) "[$label]" else label)
-        }
+    val sliderValue = radiusToSliderValue(radius)
+    Column(
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+        horizontalAlignment = Alignment.Start,
+    ) {
+        ColorTrackSlider(
+            label = "粗细",
+            value = sliderValue,
+            valueText = formatBrushRadiusLabel(radius),
+            knobColor = Color.White,
+            gradientColors =
+                listOf(
+                    Color.White.copy(alpha = 0.30f),
+                    Color.White.copy(alpha = 0.92f),
+                ),
+            trackWidth = BRUSH_SIZE_TRACK_WIDTH_DP,
+            onValueChange = { onRadiusChange(sliderValueToBrushRadius(it)) },
+        )
     }
+}
+
+private fun radiusToSliderValue(radius: Float): Float {
+    return ((radius - MIN_BRUSH_RADIUS_M) / (MAX_BRUSH_RADIUS_M - MIN_BRUSH_RADIUS_M)).coerceIn(0f, 1f)
+}
+
+private fun sliderValueToBrushRadius(value: Float): Float {
+    return lerp(MIN_BRUSH_RADIUS_M, MAX_BRUSH_RADIUS_M, value.coerceIn(0f, 1f))
+}
+
+private fun formatBrushRadiusLabel(radius: Float): String {
+    return "${(radius * 1000f).roundToInt()}mm"
 }
 
 private class PaintSceneState {
     private val sceneRoot = Entity().apply { setName("PaintSceneRoot") }
-    private val leftInput = HandDrawInputState(HandSide.Left)
-    private val rightInput = HandDrawInputState(HandSide.Right)
+    private val leftInput = HandDrawInputState()
+    private val rightInput = HandDrawInputState()
     private val activeUiPointers = mutableSetOf<PointerId>()
     private val leftStroke =
         DynamicBrushHand(
@@ -732,6 +772,8 @@ private class PaintSceneState {
     private var uiBlockUntilUptimeMillis = 0L
     private var leftUndoGestureLatched = false
     private var rightUndoGestureLatched = false
+    private val leftPreview = BrushPreview3D("Left")
+    private val rightPreview = BrushPreview3D("Right")
 
     fun attach(content: SpatialViewContent) {
         if (attached) return
@@ -760,7 +802,14 @@ private class PaintSceneState {
         }
     }
 
-    fun update(handTrackingData: HandTrackingData) {
+    fun update(
+        handTrackingData: HandTrackingData,
+        allowInstantPinchDrawing: Boolean,
+        leftPanel: Entity?,
+        leftPanelCollapsed: Boolean,
+        rightPanel: Entity?,
+        rightPanelCollapsed: Boolean,
+    ) {
         val now = SystemClock.uptimeMillis()
         val uiInteractionActive = panelInteractionActive || activeUiPointers.isNotEmpty() || now < uiBlockUntilUptimeMillis
 
@@ -771,8 +820,18 @@ private class PaintSceneState {
             rightInput.reset()
         }
 
-        leftInput.updateLongPinchState(handTrackingData.left, now, uiInteractionActive)
-        rightInput.updateLongPinchState(handTrackingData.right, now, uiInteractionActive)
+        leftInput.updateLongPinchState(
+            handPose = handTrackingData.left,
+            nowUptimeMillis = now,
+            uiInteractionActive = uiInteractionActive,
+            allowInstantPinchDrawing = allowInstantPinchDrawing,
+        )
+        rightInput.updateLongPinchState(
+            handPose = handTrackingData.right,
+            nowUptimeMillis = now,
+            uiInteractionActive = uiInteractionActive,
+            allowInstantPinchDrawing = allowInstantPinchDrawing,
+        )
         leftUndoGestureLatched =
             updateUndoGesture(
                 handPose = handTrackingData.left,
@@ -788,6 +847,8 @@ private class PaintSceneState {
                 onUndo = { rightStroke.undoLastStroke() },
             )
 
+        leftPreview.updateAnchor(panel = leftPanel, collapsed = leftPanelCollapsed)
+        rightPreview.updateAnchor(panel = rightPanel, collapsed = rightPanelCollapsed)
         leftStroke.update(handTrackingData.left, sceneRoot, leftInput.shouldDraw)
         rightStroke.update(handTrackingData.right, sceneRoot, rightInput.shouldDraw)
     }
@@ -801,6 +862,16 @@ private class PaintSceneState {
         when (handSide) {
             HandSide.Left -> leftStroke.setBrushConfig(config)
             HandSide.Right -> rightStroke.setBrushConfig(config)
+        }
+    }
+
+    fun setBrushPreviewStyle(
+        handSide: HandSide,
+        style: BrushPreviewStyle,
+    ) {
+        when (handSide) {
+            HandSide.Left -> leftPreview.setStyle(style)
+            HandSide.Right -> rightPreview.setStyle(style)
         }
     }
 
@@ -848,6 +919,150 @@ private class PaintSceneState {
     }
 }
 
+private data class BrushPreviewStyle(
+    val color: BrushColorState,
+    val radius: Float,
+    val mode: BrushMode,
+)
+
+private class BrushPreview3D(
+    private val handName: String,
+) {
+    private val previewRoot = Entity().apply { setName("${handName}BrushPreviewRoot") }
+    private var parentPanel: Entity? = null
+    private var tubeResource: MeshResource? = null
+    private var tubeEntity: ModelEntity? = null
+    private var sphereMesh: MeshResource? = null
+    private val sphereEntities = mutableListOf<ModelEntity>()
+    private var currentStyle: BrushPreviewStyle? = null
+
+    fun setStyle(style: BrushPreviewStyle) {
+        if (style == currentStyle) return
+        currentStyle = style
+        rebuild()
+    }
+
+    fun updateAnchor(
+        panel: Entity?,
+        collapsed: Boolean,
+    ) {
+        if (panel == null) {
+            previewRoot.enabled = false
+            return
+        }
+        if (panel !== parentPanel) {
+            parentPanel?.removeChild(previewRoot)
+            panel.addChild(previewRoot)
+            parentPanel = panel
+        }
+        previewRoot.enabled = !collapsed
+        previewRoot.components.set(
+            TransformComponent()
+                .setPosition(BRUSH_PREVIEW_LOCAL_POSITION)
+                .setScaleVector(Vector3(BRUSH_PREVIEW_LOCAL_SCALE)),
+        )
+    }
+
+    private fun rebuild() {
+        clearGeometry()
+        val style = currentStyle ?: return
+        when (style.mode) {
+            BrushMode.Tube -> rebuildTube(style)
+            BrushMode.SphereSteps -> rebuildSphereSteps(style)
+        }
+    }
+
+    private fun rebuildTube(style: BrushPreviewStyle) {
+        val profile =
+            buildStrokeProfile(
+                points = BRUSH_PREVIEW_POINTS,
+                startCap = true,
+                endCap = true,
+            )
+        val rings = buildTubeRingsFromProfile(profile)
+        val meshData = buildTubeMeshDataFromRings(rings, style.radius)
+        val resource = MeshResource.createWithMeshModel(meshData.model, meshData.bounds, "${handName}_brush_preview")
+        val entity =
+            ModelEntity(resource, createBrushMaterial(style.color.toColor4())).apply {
+                setName("${handName}BrushPreviewTube")
+            }
+        previewRoot.addChild(entity)
+        tubeResource = resource
+        tubeEntity = entity
+    }
+
+    private fun rebuildSphereSteps(style: BrushPreviewStyle) {
+        val resource = MeshResource.createSphere(style.radius)
+        val material = createBrushMaterial(style.color.toColor4())
+        samplePointsForSpherePreview(
+            pathPoints = BRUSH_PREVIEW_POINTS,
+            spacing = SPHERE_STEP_DISTANCE_M,
+        ).forEachIndexed { index, point ->
+            val sphere =
+                ModelEntity(resource, material).apply {
+                    setName("${handName}BrushPreviewSphere_$index")
+                    components.set(
+                        TransformComponent().setPosition(point),
+                    )
+                }
+            previewRoot.addChild(sphere)
+            sphereEntities.add(sphere)
+        }
+        sphereMesh = resource
+    }
+
+    private fun clearGeometry() {
+        tubeEntity?.let { previewRoot.removeChild(it) }
+        tubeEntity = null
+        tubeResource?.close()
+        tubeResource = null
+        sphereEntities.forEach { previewRoot.removeChild(it) }
+        sphereEntities.clear()
+        sphereMesh?.close()
+        sphereMesh = null
+    }
+}
+
+private fun samplePointsForSpherePreview(
+    pathPoints: List<Vector3>,
+    spacing: Float,
+): List<Vector3> {
+    if (pathPoints.isEmpty()) return emptyList()
+    val sampled = mutableListOf(pathPoints.first())
+    var lastPlacedPoint = pathPoints.first()
+    var distanceSinceLastPlacement = 0f
+
+    pathPoints.zipWithNext().forEach { (start, end) ->
+        var fromPoint = start
+        var remainingSegmentLength = Vector3.distance(start, end)
+        while (true) {
+            val distanceToNextPlacement = spacing - distanceSinceLastPlacement
+            if (remainingSegmentLength < distanceToNextPlacement) {
+                break
+            }
+            val segment = end - fromPoint
+            val segmentLength = segment.length()
+            if (segmentLength < EPSILON_M) {
+                break
+            }
+            val nextPoint = fromPoint + segment / segmentLength * distanceToNextPlacement
+            if (Vector3.distance(lastPlacedPoint, nextPoint) > EPSILON_M) {
+                sampled.add(nextPoint)
+                lastPlacedPoint = nextPoint
+            }
+            fromPoint = nextPoint
+            remainingSegmentLength -= distanceToNextPlacement
+            distanceSinceLastPlacement = 0f
+        }
+        distanceSinceLastPlacement += remainingSegmentLength
+    }
+
+    if (Vector3.distance(sampled.last(), pathPoints.last()) > EPSILON_M) {
+        sampled.add(pathPoints.last())
+    }
+    return sampled
+}
+
 private class DynamicBrushHand(
     handName: String,
     cursorColor: Color4,
@@ -867,7 +1082,7 @@ private class DynamicBrushHand(
     private var brushConfig =
         BrushConfig(
             color = DEFAULT_RIGHT_BRUSH_COLOR.toColor4(),
-            radius = BrushSizePreset.Medium.radius,
+            radius = DEFAULT_BRUSH_RADIUS_M,
             mode = BrushMode.Tube,
         )
 
@@ -1076,9 +1291,7 @@ private class HandPanelState(
     }
 }
 
-private class HandDrawInputState(
-    private val handSide: HandSide,
-) {
+private class HandDrawInputState {
     private var activeUiPointerId: PointerId? = null
     private var uiPressed = false
     private var pinchHoldStartUptimeMillis: Long? = null
@@ -1107,6 +1320,7 @@ private class HandDrawInputState(
         handPose: HandPose?,
         nowUptimeMillis: Long,
         uiInteractionActive: Boolean,
+        allowInstantPinchDrawing: Boolean,
     ) {
         if (uiPressed || uiInteractionActive || handPose == null) {
             pinchHoldStartUptimeMillis = null
@@ -1132,6 +1346,11 @@ private class HandDrawInputState(
             return
         }
 
+        if (allowInstantPinchDrawing) {
+            shouldDraw = true
+            return
+        }
+
         if (pinchHoldStartUptimeMillis == null) {
             pinchHoldStartUptimeMillis = nowUptimeMillis
         }
@@ -1152,16 +1371,6 @@ private class HandDrawInputState(
         pinchHoldStartUptimeMillis = null
         shouldDraw = false
     }
-}
-
-private enum class BrushSizePreset(
-    val label: String,
-    val radius: Float,
-    val dotSize: Dp,
-) {
-    Small("细", 0.0055f, 5.dp),
-    Medium("中", 0.008f, 8.dp),
-    Large("粗", 0.012f, 11.dp),
 }
 
 private data class BrushColorState(
@@ -2180,7 +2389,9 @@ private fun normalizeHue(hue: Float): Float {
 
 private const val PINCH_START_DISTANCE_M = 0.018f
 private const val PINCH_RELEASE_DISTANCE_M = 0.026f
-private const val BRUSH_RADIUS_M = 0.008f
+private const val DEFAULT_BRUSH_RADIUS_M = 0.008f
+private const val MIN_BRUSH_RADIUS_M = 0.0055f
+private const val MAX_BRUSH_RADIUS_M = 0.012f
 private const val CURSOR_BASE_RADIUS_M = 0.012f
 private const val MIN_POINT_SPACING_M = 0.004f
 private const val TARGET_POINT_SPACING_M = 0.008f
@@ -2218,8 +2429,24 @@ private const val PANEL_ORB_FORWARD_OFFSET_M = 0.05f
 private const val PANEL_EXPANDED_FORWARD_OFFSET_M = 0.15f
 private const val PANEL_EXPAND_GESTURE_DISTANCE_M = 0.028f
 private const val UNDO_GESTURE_DISTANCE_M = 0.028f
+private const val BRUSH_PREVIEW_LOCAL_SCALE = 1.0f
+private const val BRUSH_PREVIEW_CONTROL_POINT_COUNT = 90
+private const val BRUSH_PREVIEW_HELIX_TURNS = 1.5f
+private const val BRUSH_PREVIEW_HALF_WIDTH_M = 0.058f
+private const val BRUSH_PREVIEW_WAVE_AMPLITUDE_M = 0.03f
+private const val BRUSH_PREVIEW_Z_AMPLITUDE_M = 0.014f
 private val DEFAULT_LEFT_BRUSH_COLOR = BrushColorState.fromUiColor(Color(0xFF4E8CFF))
 private val DEFAULT_RIGHT_BRUSH_COLOR = BrushColorState.fromUiColor(Color(0xFFFF7A59))
+private val BRUSH_PREVIEW_LOCAL_POSITION = Vector3(0.10f, 0.02f, 0.015f)
+private val BRUSH_PREVIEW_POINTS =
+    List(BRUSH_PREVIEW_CONTROL_POINT_COUNT) { index ->
+        val t = index.toFloat() / (BRUSH_PREVIEW_CONTROL_POINT_COUNT - 1).toFloat()
+        val x = lerp(-BRUSH_PREVIEW_HALF_WIDTH_M, BRUSH_PREVIEW_HALF_WIDTH_M, t)
+        val angle = t * BRUSH_PREVIEW_HELIX_TURNS * TAU_F
+        val y = cos(angle) * BRUSH_PREVIEW_WAVE_AMPLITUDE_M
+        val z = sin(angle) * BRUSH_PREVIEW_Z_AMPLITUDE_M
+        Vector3(x, y, z)
+    }
 private val HUE_TRACK_COLORS =
     listOf(
         Color.Red,
@@ -2231,6 +2458,7 @@ private val HUE_TRACK_COLORS =
         Color.Red,
     )
 private val COLOR_TRACK_WIDTH_DP = 248.dp
+private val BRUSH_SIZE_TRACK_WIDTH_DP = 152.dp
 private val COLOR_TRACK_TOUCH_HEIGHT_DP = 34.dp
 private val COLOR_TRACK_HEIGHT_DP = 14.dp
 private val COLOR_TRACK_KNOB_DIAMETER_DP = 28.dp
