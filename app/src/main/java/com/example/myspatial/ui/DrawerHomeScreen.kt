@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
@@ -46,6 +47,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.layout.onSizeChanged
 import com.pico.spatial.core.container.SpatialViewContent
 import com.pico.spatial.core.ecs.BoundingBox
 import com.pico.spatial.core.ecs.Entity
@@ -193,6 +195,7 @@ fun DrawerHomeScreen(modifier: Modifier = Modifier) {
                         },
                         onInteractionChanged = { leftPanelInteracting = it },
                         onUndo = { paintScene.undoLastStroke(HandSide.Left) },
+                        onClear = { paintScene.clear() },
                     )
                 }
                 AttachmentPanel(
@@ -348,7 +351,7 @@ private fun ExpandedHandBrushPanel(
         ) {
             Text(text = title, style = PicoTheme.typography.titleLarge, color = Color.White)
             Button(onClick = onCollapseRequest) {
-                Text(text = "缩小")
+                Text(text = "收起")
             }
         }
         Text(
@@ -357,7 +360,7 @@ private fun ExpandedHandBrushPanel(
             color = Color.White,
         )
 
-        Text(text = "样式", style = PicoTheme.typography.titleMedium, color = Color.White)
+        Text(text = "笔刷", style = PicoTheme.typography.titleMedium, color = Color.White)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             BrushOptionButton(
                 label = "动态线",
@@ -371,15 +374,11 @@ private fun ExpandedHandBrushPanel(
             )
         }
 
-        Text(text = "大小", style = PicoTheme.typography.titleMedium, color = Color.White)
+        Text(text = "示例", style = PicoTheme.typography.titleMedium, color = Color.White)
+        Spacer(modifier = Modifier.height(BRUSH_PREVIEW_PANEL_CLEARANCE_DP))
         BrushSizeControl(
             radius = brushRadius,
             onRadiusChange = onBrushRadiusChange,
-        )
-        Text(
-            text = "面板前方会显示实时 3D 笔迹预览",
-            style = PicoTheme.typography.bodyMedium,
-            color = Color.White.copy(alpha = 0.78f),
         )
 
         Text(text = "颜色", style = PicoTheme.typography.titleMedium, color = Color.White)
@@ -394,7 +393,7 @@ private fun ExpandedHandBrushPanel(
             }
             onClear?.let { clearAction ->
                 Button(onClick = clearAction) {
-                    Text(text = "Clear Stroke")
+                    Text(text = "清除画布")
                 }
             }
         }
@@ -411,8 +410,7 @@ private fun CollapsedHandOrb(
         modifier =
             Modifier
                 .size(COLLAPSED_PANEL_SIZE_DP)
-                .background(color.copy(alpha = 0.20f), CircleShape)
-                .border(2.dp, Color.White.copy(alpha = 0.86f), CircleShape),
+                .background(Color.Transparent, CircleShape),
         contentAlignment = Alignment.Center,
     ) {
         Canvas(modifier = Modifier.fillMaxSize()) {
@@ -446,7 +444,7 @@ private fun TripleColorTrackPalette(
     onColorSelected: (BrushColorState) -> Unit,
 ) {
     Column(
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
         horizontalAlignment = Alignment.Start,
     ) {
         ColorTrackSlider(
@@ -499,25 +497,6 @@ private fun TripleColorTrackPalette(
                 onColorSelected(selectedColor.copy(value = trackValue))
             },
         )
-
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Box(
-                modifier =
-                    Modifier
-                        .size(28.dp)
-                        .border(2.dp, Color.White, CircleShape)
-                        .background(selectedColor.uiColor, CircleShape),
-            )
-            Text(
-                text =
-                    "H ${selectedColor.hue.roundToInt()}  S ${(selectedColor.saturation * 100f).roundToInt()}  V ${(selectedColor.value * 100f).roundToInt()}",
-                style = PicoTheme.typography.bodyMedium,
-                color = Color.White,
-            )
-        }
     }
 }
 
@@ -544,18 +523,22 @@ private fun ColorTrackSlider(
         }
     }
 
-    Column(
-        verticalArrangement = Arrangement.spacedBy(6.dp),
-        horizontalAlignment = Alignment.Start,
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Row(
-            modifier = Modifier.width(trackWidth),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(text = label, style = PicoTheme.typography.bodyMedium, color = Color.White)
-            Text(text = valueText, style = PicoTheme.typography.bodyMedium, color = Color.White)
-        }
+        Text(
+            text = label,
+            modifier = Modifier.width(COLOR_TRACK_LABEL_WIDTH_DP),
+            style = PicoTheme.typography.bodyMedium,
+            color = Color.White,
+        )
+        Text(
+            text = valueText,
+            modifier = Modifier.width(COLOR_TRACK_VALUE_WIDTH_DP),
+            style = PicoTheme.typography.bodyMedium,
+            color = Color.White,
+        )
 
         Box(
             modifier =
@@ -2397,7 +2380,7 @@ private const val MIN_POINT_SPACING_M = 0.004f
 private const val TARGET_POINT_SPACING_M = 0.008f
 private const val MAX_SEGMENT_JUMP_M = 0.08f
 private const val MAX_STROKE_VERTICES = 12000
-private const val SPHERE_STEP_DISTANCE_M = 0.10f
+private const val SPHERE_STEP_DISTANCE_M = 0.05f
 private const val STROKE_RING_SIDES = 12
 private const val SMOOTHING_PASSES = 2
 private const val SMOOTHING_CONTEXT_POINT_COUNT = 2
@@ -2412,7 +2395,7 @@ private const val PROFILE_OVERLAP_SEARCH_POINT_COUNT = 12
 private const val PROFILE_OVERLAP_DISTANCE_THRESHOLD_M = 0.03f
 private const val MESH_UPDATE_THROTTLE_MS = 33L
 private const val THIN_STROKE_SCALE = 0.42f
-private const val END_TRANSITION_DISTANCE_M = 0.10f
+private const val END_TRANSITION_DISTANCE_M = 0.07f
 private const val END_CAP_LENGTH_M = 0.018f
 private const val END_CAP_SAMPLE_COUNT = 5
 private const val LONG_PINCH_ACTIVATION_MS = 450L
@@ -2421,7 +2404,7 @@ private const val RIGHT_CONTROL_PANEL_ATTACHMENT_ID = "right_brush_control_panel
 private val LEFT_CONTROL_PANEL_POSITION = Vector3(-0.38f, 1.12f, -0.58f)
 private val RIGHT_CONTROL_PANEL_POSITION = Vector3(0.38f, 1.12f, -0.58f)
 private const val CONTROL_PANEL_SCALE = 1.0f
-private val CONTROL_PANEL_WIDTH_DP = 320.dp
+private val CONTROL_PANEL_WIDTH_DP = 380.dp
 private val COLLAPSED_PANEL_SIZE_DP = 72.dp
 private const val COLLAPSED_PANEL_WORLD_SCALE = 0.32f
 private const val PANEL_TRANSFORM_LERP = 0.22f
@@ -2437,7 +2420,7 @@ private const val BRUSH_PREVIEW_WAVE_AMPLITUDE_M = 0.03f
 private const val BRUSH_PREVIEW_Z_AMPLITUDE_M = 0.014f
 private val DEFAULT_LEFT_BRUSH_COLOR = BrushColorState.fromUiColor(Color(0xFF4E8CFF))
 private val DEFAULT_RIGHT_BRUSH_COLOR = BrushColorState.fromUiColor(Color(0xFFFF7A59))
-private val BRUSH_PREVIEW_LOCAL_POSITION = Vector3(0.10f, 0.02f, 0.015f)
+private val BRUSH_PREVIEW_LOCAL_POSITION = Vector3(-0.03f, 0.02f, 0.015f)
 private val BRUSH_PREVIEW_POINTS =
     List(BRUSH_PREVIEW_CONTROL_POINT_COUNT) { index ->
         val t = index.toFloat() / (BRUSH_PREVIEW_CONTROL_POINT_COUNT - 1).toFloat()
@@ -2457,8 +2440,11 @@ private val HUE_TRACK_COLORS =
         Color.Magenta,
         Color.Red,
     )
-private val COLOR_TRACK_WIDTH_DP = 248.dp
-private val BRUSH_SIZE_TRACK_WIDTH_DP = 152.dp
+private val COLOR_TRACK_WIDTH_DP = 236.dp
+private val COLOR_TRACK_LABEL_WIDTH_DP = 40.dp
+private val COLOR_TRACK_VALUE_WIDTH_DP = 44.dp
+private val BRUSH_SIZE_TRACK_WIDTH_DP = 212.dp
+private val BRUSH_PREVIEW_PANEL_CLEARANCE_DP = 72.dp
 private val COLOR_TRACK_TOUCH_HEIGHT_DP = 34.dp
 private val COLOR_TRACK_HEIGHT_DP = 14.dp
 private val COLOR_TRACK_KNOB_DIAMETER_DP = 28.dp
