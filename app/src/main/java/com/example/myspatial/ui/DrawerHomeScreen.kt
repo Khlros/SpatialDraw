@@ -372,6 +372,16 @@ private fun ExpandedHandBrushPanel(
                 selected = selectedMode == BrushMode.SphereSteps,
                 onClick = { onModeSelected(BrushMode.SphereSteps) },
             )
+            BrushOptionButton(
+                label = "圆球",
+                selected = selectedMode == BrushMode.GrowingSphere,
+                onClick = { onModeSelected(BrushMode.GrowingSphere) },
+            )
+            BrushOptionButton(
+                label = "直线",
+                selected = selectedMode == BrushMode.StraightLine,
+                onClick = { onModeSelected(BrushMode.StraightLine) },
+            )
         }
 
         Text(text = "示例", style = PicoTheme.typography.titleMedium, color = Color.White)
@@ -693,7 +703,10 @@ private fun BrushOptionButton(
     onClick: () -> Unit,
 ) {
     Button(onClick = onClick) {
-        Text(text = if (selected) "[$label]" else label)
+        Text(
+            text = if (selected) "[$label]" else label,
+            style = PicoTheme.typography.bodyMedium,
+        )
     }
 }
 
@@ -952,6 +965,8 @@ private class BrushPreview3D(
         when (style.mode) {
             BrushMode.Tube -> rebuildTube(style)
             BrushMode.SphereSteps -> rebuildSphereSteps(style)
+            BrushMode.GrowingSphere -> rebuildGrowingSphere(style)
+            BrushMode.StraightLine -> rebuildStraightLine(style)
         }
     }
 
@@ -992,6 +1007,43 @@ private class BrushPreview3D(
             sphereEntities.add(sphere)
         }
         sphereMesh = resource
+    }
+
+    private fun rebuildGrowingSphere(style: BrushPreviewStyle) {
+        val previewRadius =
+            maxOf(
+                style.radius * GROWING_SPHERE_PREVIEW_SCALE,
+                BRUSH_PREVIEW_MIN_GROWING_SPHERE_RADIUS_M,
+            ).coerceAtMost(MAX_GROWING_SPHERE_RADIUS_M)
+        val resource = MeshResource.createSphere(previewRadius)
+        val entity =
+            ModelEntity(resource, createBrushMaterial(style.color.toColor4())).apply {
+                setName("${handName}BrushPreviewGrowingSphere")
+                components.set(
+                    TransformComponent().setPosition(Vector3.ZERO),
+                )
+            }
+        previewRoot.addChild(entity)
+        sphereMesh = resource
+        sphereEntities.add(entity)
+    }
+
+    private fun rebuildStraightLine(style: BrushPreviewStyle) {
+        val profile =
+            buildUniformCapsuleProfile(
+                points = BRUSH_PREVIEW_LINE_POINTS,
+                radius = style.radius,
+            )
+        val rings = buildTubeRingsFromProfile(profile)
+        val meshData = buildTubeMeshDataFromRings(rings, style.radius)
+        val resource = MeshResource.createWithMeshModel(meshData.model, meshData.bounds, "${handName}_brush_preview_line")
+        val entity =
+            ModelEntity(resource, createBrushMaterial(style.color.toColor4())).apply {
+                setName("${handName}BrushPreviewStraightLine")
+            }
+        previewRoot.addChild(entity)
+        tubeResource = resource
+        tubeEntity = entity
     }
 
     private fun clearGeometry() {
@@ -1127,7 +1179,7 @@ private class DynamicBrushHand(
             beginStroke(localDrawPoint)
             return
         }
-        if (distance < MIN_POINT_SPACING_M) {
+        if (distance < MIN_POINT_SPACING_M && !stroke.requiresContinuousUpdates) {
             return
         }
         if (stroke.vertexCount >= MAX_STROKE_VERTICES) {
@@ -1176,6 +1228,20 @@ private class DynamicBrushHand(
                         parent = strokesRoot,
                         radius = brushConfig.radius,
                     )
+                BrushMode.GrowingSphere ->
+                    GrowingSphereStroke(
+                        strokeName = strokeName,
+                        material = createBrushMaterial(brushConfig.color),
+                        parent = strokesRoot,
+                        baseRadius = brushConfig.radius,
+                    )
+                BrushMode.StraightLine ->
+                    StraightLineStroke(
+                        strokeName = strokeName,
+                        material = createBrushMaterial(brushConfig.color),
+                        parent = strokesRoot,
+                        radius = brushConfig.radius,
+                    )
             }
         stroke.appendPoint(startPoint)
         activeStroke = stroke
@@ -1207,6 +1273,8 @@ private data class BrushConfig(
 private enum class BrushMode {
     Tube,
     SphereSteps,
+    GrowingSphere,
+    StraightLine,
 }
 
 private enum class HandSide {
@@ -1386,6 +1454,7 @@ private interface BrushStroke {
     val lastPoint: Vector3?
     val vertexCount: Int
     val hasRenderableMesh: Boolean
+    val requiresContinuousUpdates: Boolean
 
     fun appendPoint(point: Vector3)
 
@@ -1420,6 +1489,9 @@ private class DynamicTubeStroke(
 
     override val hasRenderableMesh: Boolean
         get() = dynamicMeshEntity != null || frozenChunks.isNotEmpty()
+
+    override val requiresContinuousUpdates: Boolean
+        get() = false
 
     init {
         parent.addChild(strokeRoot)
@@ -1689,6 +1761,9 @@ private class SphereStepStroke(
     override val hasRenderableMesh: Boolean
         get() = spheres.isNotEmpty()
 
+    override val requiresContinuousUpdates: Boolean
+        get() = false
+
     init {
         parent.addChild(strokeRoot)
     }
@@ -1742,6 +1817,151 @@ private class SphereStepStroke(
         strokeRoot.addChild(sphere)
         spheres.add(sphere)
         distanceSinceLastPlacement = 0f
+    }
+}
+
+private class GrowingSphereStroke(
+    private val strokeName: String,
+    private val material: Material,
+    private val parent: Entity,
+    private val baseRadius: Float,
+) : BrushStroke {
+    private val strokeRoot = Entity().apply { setName(strokeName) }
+    private val sphereMesh = MeshResource.createSphere(1f)
+    private var sphereEntity: ModelEntity? = null
+    private var centerPoint: Vector3? = null
+    private var drawStartRealtimeMs = 0L
+    private var currentRadius = baseRadius
+
+    override val lastPoint: Vector3?
+        get() = centerPoint
+
+    override val vertexCount: Int
+        get() = if (sphereEntity != null) 1 else 0
+
+    override val hasRenderableMesh: Boolean
+        get() = sphereEntity != null
+
+    override val requiresContinuousUpdates: Boolean
+        get() = true
+
+    init {
+        parent.addChild(strokeRoot)
+    }
+
+    override fun appendPoint(point: Vector3) {
+        if (centerPoint == null) {
+            centerPoint = point
+            drawStartRealtimeMs = SystemClock.elapsedRealtime()
+            currentRadius = baseRadius
+            val entity =
+                ModelEntity(sphereMesh, material).apply {
+                    setName(strokeName)
+                }
+            strokeRoot.addChild(entity)
+            sphereEntity = entity
+        }
+        updateSphereScale()
+    }
+
+    override fun finish() {
+        updateSphereScale()
+    }
+
+    override fun dispose() {
+        parent.removeChild(strokeRoot)
+        sphereMesh.close()
+    }
+
+    private fun updateSphereScale() {
+        val center = centerPoint ?: return
+        val elapsedSeconds = (SystemClock.elapsedRealtime() - drawStartRealtimeMs).coerceAtLeast(0L) / 1000f
+        currentRadius =
+            (baseRadius + elapsedSeconds * GROWING_SPHERE_GROWTH_SPEED_M_PER_S)
+                .coerceAtMost(MAX_GROWING_SPHERE_RADIUS_M)
+        sphereEntity?.components?.set(
+            TransformComponent()
+                .setPosition(center)
+                .setScaleVector(Vector3(currentRadius)),
+        )
+    }
+}
+
+private class StraightLineStroke(
+    private val strokeName: String,
+    private val material: Material,
+    private val parent: Entity,
+    private val radius: Float,
+) : BrushStroke {
+    private val strokeRoot = Entity().apply { setName(strokeName) }
+    private var startPoint: Vector3? = null
+    private var endPoint: Vector3? = null
+    private var meshResource: MeshResource? = null
+    private var meshEntity: ModelEntity? = null
+
+    override val lastPoint: Vector3?
+        get() = endPoint ?: startPoint
+
+    override val vertexCount: Int
+        get() = if (meshEntity != null) STROKE_RING_SIDES * 2 else 0
+
+    override val hasRenderableMesh: Boolean
+        get() = meshEntity != null
+
+    override val requiresContinuousUpdates: Boolean
+        get() = false
+
+    init {
+        parent.addChild(strokeRoot)
+    }
+
+    override fun appendPoint(point: Vector3) {
+        if (startPoint == null) {
+            startPoint = point
+            endPoint = point
+            return
+        }
+        endPoint = point
+        rebuildLineMesh()
+    }
+
+    override fun finish() {
+        rebuildLineMesh()
+    }
+
+    override fun dispose() {
+        meshEntity?.let { strokeRoot.removeChild(it) }
+        meshEntity = null
+        meshResource?.close()
+        meshResource = null
+        parent.removeChild(strokeRoot)
+    }
+
+    private fun rebuildLineMesh() {
+        val start = startPoint ?: return
+        val end = endPoint ?: return
+        if (Vector3.distance(start, end) < MIN_POINT_SPACING_M) {
+            return
+        }
+        val profile =
+            buildUniformCapsuleProfile(
+                points = listOf(start, end),
+                radius = radius,
+            )
+        val rings = buildTubeRingsFromProfile(profile)
+        val meshData = buildTubeMeshDataFromRings(rings, radius)
+        val existing = meshResource
+        if (existing == null) {
+            val resource = MeshResource.createWithMeshModel(meshData.model, meshData.bounds, strokeName)
+            meshResource = resource
+            meshEntity =
+                ModelEntity(resource, material).apply {
+                    setName(strokeName)
+                }
+            strokeRoot.addChild(meshEntity!!)
+        } else {
+            existing.replaceWithMeshModel(meshData.model, meshData.bounds)
+        }
     }
 }
 
@@ -2108,6 +2328,58 @@ private fun buildStrokeProfile(
     )
 }
 
+private fun buildUniformCapsuleProfile(
+    points: List<Vector3>,
+    radius: Float,
+): StrokeProfile {
+    if (points.size < 2) {
+        return StrokeProfile(
+            positions = points,
+            radiusScales = List(points.size) { 1f },
+        )
+    }
+
+    val corePoints = resampleStrokePoints(points, TARGET_POINT_SPACING_M)
+    if (corePoints.size < 2) {
+        return StrokeProfile(
+            positions = corePoints,
+            radiusScales = List(corePoints.size) { 1f },
+        )
+    }
+
+    val startTangent = safeNormalize(corePoints[1] - corePoints[0], Vector3.FORWARD)
+    val endTangent =
+        safeNormalize(
+            corePoints.last() - corePoints[corePoints.lastIndex - 1],
+            Vector3.FORWARD,
+        )
+    val capLength = maxOf(radius, MIN_POINT_SPACING_M)
+    val positions = mutableListOf<Vector3>()
+    val radiusScales = mutableListOf<Float>()
+
+    for (step in 0 until END_CAP_SAMPLE_COUNT) {
+        val u = step.toFloat() / END_CAP_SAMPLE_COUNT.toFloat()
+        positions.add(corePoints.first() - startTangent * (capLength * (1f - u)))
+        radiusScales.add(hemisphereBlend(u))
+    }
+
+    corePoints.forEach { point ->
+        positions.add(point)
+        radiusScales.add(1f)
+    }
+
+    for (step in 1..END_CAP_SAMPLE_COUNT) {
+        val u = step.toFloat() / END_CAP_SAMPLE_COUNT.toFloat()
+        positions.add(corePoints.last() + endTangent * (capLength * u))
+        radiusScales.add(hemisphereBlend(1f - u))
+    }
+
+    return StrokeProfile(
+        positions = positions,
+        radiusScales = radiusScales,
+    )
+}
+
 private fun smoothStrokePoints(
     points: List<Vector3>,
     passes: Int,
@@ -2375,6 +2647,8 @@ private const val PINCH_RELEASE_DISTANCE_M = 0.026f
 private const val DEFAULT_BRUSH_RADIUS_M = 0.008f
 private const val MIN_BRUSH_RADIUS_M = 0.0055f
 private const val MAX_BRUSH_RADIUS_M = 0.012f
+private const val MAX_GROWING_SPHERE_RADIUS_M = 0.3f
+private const val GROWING_SPHERE_GROWTH_SPEED_M_PER_S = 0.22f
 private const val CURSOR_BASE_RADIUS_M = 0.012f
 private const val MIN_POINT_SPACING_M = 0.004f
 private const val TARGET_POINT_SPACING_M = 0.008f
@@ -2413,11 +2687,14 @@ private const val PANEL_EXPANDED_FORWARD_OFFSET_M = 0.15f
 private const val PANEL_EXPAND_GESTURE_DISTANCE_M = 0.028f
 private const val UNDO_GESTURE_DISTANCE_M = 0.028f
 private const val BRUSH_PREVIEW_LOCAL_SCALE = 1.0f
+private const val GROWING_SPHERE_PREVIEW_SCALE = 2.6f
+private const val BRUSH_PREVIEW_MIN_GROWING_SPHERE_RADIUS_M = 0.025f
 private const val BRUSH_PREVIEW_CONTROL_POINT_COUNT = 90
 private const val BRUSH_PREVIEW_HELIX_TURNS = 1.5f
 private const val BRUSH_PREVIEW_HALF_WIDTH_M = 0.058f
 private const val BRUSH_PREVIEW_WAVE_AMPLITUDE_M = 0.03f
 private const val BRUSH_PREVIEW_Z_AMPLITUDE_M = 0.014f
+private const val BRUSH_PREVIEW_LINE_HALF_LENGTH_M = 0.09f
 private val DEFAULT_LEFT_BRUSH_COLOR = BrushColorState.fromUiColor(Color(0xFF4E8CFF))
 private val DEFAULT_RIGHT_BRUSH_COLOR = BrushColorState.fromUiColor(Color(0xFFFF7A59))
 private val BRUSH_PREVIEW_LOCAL_POSITION = Vector3(-0.03f, 0.02f, 0.015f)
@@ -2430,6 +2707,11 @@ private val BRUSH_PREVIEW_POINTS =
         val z = sin(angle) * BRUSH_PREVIEW_Z_AMPLITUDE_M
         Vector3(x, y, z)
     }
+private val BRUSH_PREVIEW_LINE_POINTS =
+    listOf(
+        Vector3(-BRUSH_PREVIEW_LINE_HALF_LENGTH_M, 0f, 0f),
+        Vector3(BRUSH_PREVIEW_LINE_HALF_LENGTH_M, 0f, 0f),
+    )
 private val HUE_TRACK_COLORS =
     listOf(
         Color.Red,
