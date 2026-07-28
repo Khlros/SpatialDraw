@@ -1,14 +1,21 @@
 package com.example.myspatial.ui
 
+import android.graphics.Color as AndroidColor
 import android.os.SystemClock
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
@@ -17,13 +24,24 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.colorspace.ColorSpaces
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.PointerId
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.shape.CircleShape
 import com.pico.spatial.core.container.SpatialViewContent
 import com.pico.spatial.core.ecs.BoundingBox
 import com.pico.spatial.core.ecs.Entity
@@ -50,10 +68,13 @@ import com.pico.spatial.ui.foundation.content.SpatialView
 import com.pico.spatial.ui.foundation.gesture.SpatialPointerInfo
 import com.pico.spatial.ui.foundation.gesture.data.InteractionKind
 import com.pico.spatial.ui.foundation.gesture.detectSpatialPointerEvent
+import com.pico.spatial.ui.foundation.hover.spatialHoverEffect
+import com.pico.spatial.ui.foundation.hover.tween
 import kotlin.math.PI
 import kotlin.math.acos
 import kotlin.math.abs
 import kotlin.math.cos
+import kotlin.math.roundToInt
 import kotlin.math.sin
 import kotlin.math.sqrt
 
@@ -65,17 +86,34 @@ fun DrawerHomeScreen(modifier: Modifier = Modifier) {
         handTrackingProvider.dataFlow.collectAsState(initial = HandTrackingData(null, null, 0L))
     val latestHandTrackingData = rememberUpdatedState(handTrackingData)
     val paintScene = remember { PaintSceneState() }
-    var selectedColor by remember { mutableStateOf(BrushColorPreset.Coral) }
-    var selectedSize by remember { mutableStateOf(BrushSizePreset.Medium) }
-    var selectedMode by remember { mutableStateOf(BrushMode.Tube) }
+    var leftPanelInteracting by remember { mutableStateOf(false) }
+    var rightPanelInteracting by remember { mutableStateOf(false) }
+    var leftSelectedColor by remember { mutableStateOf(DEFAULT_LEFT_BRUSH_COLOR) }
+    var leftSelectedSize by remember { mutableStateOf(BrushSizePreset.Medium) }
+    var leftSelectedMode by remember { mutableStateOf(BrushMode.Tube) }
+    var rightSelectedColor by remember { mutableStateOf(DEFAULT_RIGHT_BRUSH_COLOR) }
+    var rightSelectedSize by remember { mutableStateOf(BrushSizePreset.Medium) }
+    var rightSelectedMode by remember { mutableStateOf(BrushMode.Tube) }
 
     paintScene.setBrushConfig(
-        BrushConfig(
-            color = selectedColor.color,
-            radius = selectedSize.radius,
-            mode = selectedMode,
-        ),
+        handSide = HandSide.Left,
+        config =
+            BrushConfig(
+                color = leftSelectedColor.toColor4(),
+                radius = leftSelectedSize.radius,
+                mode = leftSelectedMode,
+            ),
     )
+    paintScene.setBrushConfig(
+        handSide = HandSide.Right,
+        config =
+            BrushConfig(
+                color = rightSelectedColor.toColor4(),
+                radius = rightSelectedSize.radius,
+                mode = rightSelectedMode,
+            ),
+    )
+    paintScene.setPanelInteractionActive(leftPanelInteracting || rightPanelInteracting)
 
     DisposableEffect(handTrackingProvider) {
         handTrackingProvider.start()
@@ -103,10 +141,18 @@ fun DrawerHomeScreen(modifier: Modifier = Modifier) {
                     },
             initial = { content, attachments ->
                 paintScene.attach(content)
-                attachments.entity(CONTROL_PANEL_ATTACHMENT_ID)?.let { panel ->
+                attachments.entity(LEFT_CONTROL_PANEL_ATTACHMENT_ID)?.let { panel ->
                     panel.components.set(
                         TransformComponent()
-                            .setPosition(CONTROL_PANEL_POSITION)
+                            .setPosition(LEFT_CONTROL_PANEL_POSITION)
+                            .setScaleVector(Vector3(CONTROL_PANEL_SCALE)),
+                    )
+                    content.addEntity(panel)
+                }
+                attachments.entity(RIGHT_CONTROL_PANEL_ATTACHMENT_ID)?.let { panel ->
+                    panel.components.set(
+                        TransformComponent()
+                            .setPosition(RIGHT_CONTROL_PANEL_POSITION)
                             .setScaleVector(Vector3(CONTROL_PANEL_SCALE)),
                     )
                     content.addEntity(panel)
@@ -114,15 +160,31 @@ fun DrawerHomeScreen(modifier: Modifier = Modifier) {
             },
             attachments = {
                 AttachmentPanel(
-                    id = CONTROL_PANEL_ATTACHMENT_ID,
+                    id = LEFT_CONTROL_PANEL_ATTACHMENT_ID,
                 ) {
-                    BrushControlPanel(
-                        selectedColor = selectedColor,
-                        selectedSize = selectedSize,
-                        selectedMode = selectedMode,
-                        onColorSelected = { selectedColor = it },
-                        onSizeSelected = { selectedSize = it },
-                        onModeSelected = { selectedMode = it },
+                    HandBrushPanel(
+                        title = "左手画笔",
+                        selectedColor = leftSelectedColor,
+                        selectedSize = leftSelectedSize,
+                        selectedMode = leftSelectedMode,
+                        onColorSelected = { leftSelectedColor = it },
+                        onSizeSelected = { leftSelectedSize = it },
+                        onModeSelected = { leftSelectedMode = it },
+                        onInteractionChanged = { leftPanelInteracting = it },
+                    )
+                }
+                AttachmentPanel(
+                    id = RIGHT_CONTROL_PANEL_ATTACHMENT_ID,
+                ) {
+                    HandBrushPanel(
+                        title = "右手画笔",
+                        selectedColor = rightSelectedColor,
+                        selectedSize = rightSelectedSize,
+                        selectedMode = rightSelectedMode,
+                        onColorSelected = { rightSelectedColor = it },
+                        onSizeSelected = { rightSelectedSize = it },
+                        onModeSelected = { rightSelectedMode = it },
+                        onInteractionChanged = { rightPanelInteracting = it },
                         onClear = { paintScene.clear() },
                     )
                 }
@@ -135,31 +197,51 @@ fun DrawerHomeScreen(modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun BrushControlPanel(
-    selectedColor: BrushColorPreset,
+private fun HandBrushPanel(
+    title: String,
+    selectedColor: BrushColorState,
     selectedSize: BrushSizePreset,
     selectedMode: BrushMode,
-    onColorSelected: (BrushColorPreset) -> Unit,
+    onColorSelected: (BrushColorState) -> Unit,
     onSizeSelected: (BrushSizePreset) -> Unit,
     onModeSelected: (BrushMode) -> Unit,
-    onClear: () -> Unit,
+    onInteractionChanged: (Boolean) -> Unit,
+    onClear: (() -> Unit)? = null,
 ) {
+    DisposableEffect(Unit) {
+        onDispose { onInteractionChanged(false) }
+    }
+
     Column(
         modifier =
             Modifier
                 .width(320.dp)
                 .background(Color(0xCC1B1D24))
+                .pointerInput(Unit) {
+                    awaitEachGesture {
+                        val down =
+                            awaitPointerEvent(PointerEventPass.Initial).changes.firstOrNull { it.pressed }
+                                ?: return@awaitEachGesture
+                        onInteractionChanged(true)
+                        do {
+                            val event = awaitPointerEvent(PointerEventPass.Initial)
+                            if (event.changes.none { it.pressed }) {
+                                onInteractionChanged(false)
+                                break
+                            }
+                        } while (true)
+                    }
+                }
                 .padding(18.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
         horizontalAlignment = Alignment.Start,
     ) {
-        Text(text = "Brush Panel", style = PicoTheme.typography.titleLarge)
+        Text(text = title, style = PicoTheme.typography.titleLarge)
         Text(
-            text = "短 pinch 用来点面板，长 pinch 才会开始绘画。",
+            text = "短 pinch 点面板，长 pinch 开始绘画。",
             style = PicoTheme.typography.bodyMedium,
         )
 
-        Text(text = "模式", style = PicoTheme.typography.titleMedium)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             BrushOptionButton(
                 label = "动态线",
@@ -173,11 +255,11 @@ private fun BrushControlPanel(
             )
         }
 
-        Text(text = "粗细", style = PicoTheme.typography.titleMedium)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             BrushSizePreset.entries.forEach { size ->
-                BrushOptionButton(
+                BrushSizeOptionButton(
                     label = size.label,
+                    dotSize = size.dotSize,
                     selected = selectedSize == size,
                     onClick = { onSizeSelected(size) },
                 )
@@ -185,34 +267,275 @@ private fun BrushControlPanel(
         }
 
         Text(text = "颜色", style = PicoTheme.typography.titleMedium)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            BrushColorPreset.entries.take(3).forEach { color ->
-                BrushOptionButton(
-                    label = color.label,
-                    selected = selectedColor == color,
-                    onClick = { onColorSelected(color) },
-                )
-            }
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            BrushColorPreset.entries.drop(3).forEach { color ->
-                BrushOptionButton(
-                    label = color.label,
-                    selected = selectedColor == color,
-                    onClick = { onColorSelected(color) },
-                )
-            }
-        }
+        TripleColorTrackPalette(
+            selectedColor = selectedColor,
+            onColorSelected = onColorSelected,
+        )
 
         Text(
             text = "圆球点阵模式下，轨迹至少移动 10cm 才会再落下一颗球。",
             style = PicoTheme.typography.bodyMedium,
         )
 
-        Button(onClick = onClear) {
-            Text(text = "Clear Stroke")
+        onClear?.let { clearAction ->
+            Button(onClick = clearAction) {
+                Text(text = "Clear Stroke")
+            }
         }
     }
+}
+
+@Composable
+private fun TripleColorTrackPalette(
+    selectedColor: BrushColorState,
+    onColorSelected: (BrushColorState) -> Unit,
+) {
+    Column(
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+        horizontalAlignment = Alignment.Start,
+    ) {
+        ColorTrackSlider(
+            label = "色相",
+            value = selectedColor.hue / 360f,
+            valueText = selectedColor.hue.roundToInt().toString(),
+            knobColor = selectedColor.uiColor,
+            gradientColors = HUE_TRACK_COLORS,
+            onValueChange = { trackValue ->
+                onColorSelected(selectedColor.copy(hue = trackValue * 360f))
+            },
+        )
+        ColorTrackSlider(
+            label = "饱和",
+            value = selectedColor.saturation,
+            valueText = (selectedColor.saturation * 100f).roundToInt().toString(),
+            knobColor = selectedColor.uiColor,
+            gradientColors =
+                listOf(
+                    BrushColorState(
+                        hue = selectedColor.hue,
+                        saturation = 0f,
+                        value = selectedColor.value,
+                    ).uiColor,
+                    BrushColorState(
+                        hue = selectedColor.hue,
+                        saturation = 1f,
+                        value = selectedColor.value,
+                    ).uiColor,
+                ),
+            onValueChange = { trackValue ->
+                onColorSelected(selectedColor.copy(saturation = trackValue))
+            },
+        )
+        ColorTrackSlider(
+            label = "明度",
+            value = selectedColor.value,
+            valueText = (selectedColor.value * 100f).roundToInt().toString(),
+            knobColor = selectedColor.uiColor,
+            gradientColors =
+                listOf(
+                    Color.Black,
+                    BrushColorState(
+                        hue = selectedColor.hue,
+                        saturation = selectedColor.saturation,
+                        value = 1f,
+                    ).uiColor,
+                ),
+            onValueChange = { trackValue ->
+                onColorSelected(selectedColor.copy(value = trackValue))
+            },
+        )
+
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier =
+                    Modifier
+                        .size(28.dp)
+                        .border(2.dp, Color.White, CircleShape)
+                        .background(selectedColor.uiColor, CircleShape),
+            )
+            Text(
+                text =
+                    "H ${selectedColor.hue.roundToInt()}  S ${(selectedColor.saturation * 100f).roundToInt()}  V ${(selectedColor.value * 100f).roundToInt()}",
+                style = PicoTheme.typography.bodyMedium,
+            )
+        }
+    }
+}
+
+@Composable
+private fun ColorTrackSlider(
+    label: String,
+    value: Float,
+    valueText: String,
+    knobColor: Color,
+    gradientColors: List<Color>,
+    onValueChange: (Float) -> Unit,
+) {
+    val density = LocalDensity.current
+    val trackHeightPx = with(density) { COLOR_TRACK_HEIGHT_DP.toPx() }
+    var isDragging by remember { mutableStateOf(false) }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            isDragging = false
+        }
+    }
+
+    Column(
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+        horizontalAlignment = Alignment.Start,
+    ) {
+        Row(
+            modifier = Modifier.width(COLOR_TRACK_WIDTH_DP),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(text = label, style = PicoTheme.typography.bodyMedium)
+            Text(text = valueText, style = PicoTheme.typography.bodyMedium)
+        }
+
+        Box(
+            modifier =
+                Modifier
+                    .size(width = COLOR_TRACK_WIDTH_DP, height = COLOR_TRACK_TOUCH_HEIGHT_DP)
+                    .spatialHoverEffect {
+                        val isActive = it.isActive
+                        animation(tween(durationMillis = 160)) {
+                            scale(if (isActive) 1.01f else 1f)
+                        }
+                        alpha(if (isActive) 1f else 0.98f)
+                    }
+                    .pointerInput(value) {
+                        awaitPointerEventScope {
+                            while (true) {
+                                val event = awaitPointerEvent(PointerEventPass.Initial)
+                                val change = event.changes.firstOrNull() ?: continue
+                                val pressed = event.changes.any { it.pressed }
+                                isDragging = pressed
+                                if (pressed) {
+                                    val normalized =
+                                        ((change.position.x - COLOR_TRACK_HORIZONTAL_PADDING_PX) / COLOR_TRACK_DRAW_WIDTH_PX)
+                                            .coerceIn(0f, 1f)
+                                    onValueChange(normalized)
+                                    event.changes.forEach { pointerChange ->
+                                        if (pointerChange.pressed) {
+                                            pointerChange.consume()
+                                        }
+                                    }
+                                } else {
+                                    isDragging = false
+                                }
+                            }
+                        }
+                    },
+        ) {
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                drawColorTrack(
+                    value = value,
+                    trackHeightPx = trackHeightPx,
+                    gradientColors = gradientColors,
+                )
+            }
+            ColorTrackKnob(
+                value = value,
+                color = knobColor,
+                dragging = isDragging,
+            )
+        }
+    }
+}
+
+private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawColorTrack(
+    value: Float,
+    trackHeightPx: Float,
+    gradientColors: List<Color>,
+) {
+    val trackTop = (size.height - trackHeightPx) * 0.5f
+    val trackLeft = COLOR_TRACK_HORIZONTAL_PADDING_PX
+    val trackWidth = size.width - COLOR_TRACK_HORIZONTAL_PADDING_PX * 2f
+    val trackCorner = CornerRadius(trackHeightPx * 0.5f)
+
+    drawRoundRect(
+        brush = Brush.horizontalGradient(gradientColors),
+        topLeft = Offset(trackLeft, trackTop),
+        size = Size(trackWidth, trackHeightPx),
+        cornerRadius = trackCorner,
+    )
+    drawRoundRect(
+        color = Color.White.copy(alpha = 0.16f),
+        topLeft = Offset(trackLeft, trackTop),
+        size = Size(trackWidth, trackHeightPx),
+        cornerRadius = trackCorner,
+        style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2f),
+    )
+}
+
+@Composable
+private fun ColorTrackKnob(
+    value: Float,
+    color: Color,
+    dragging: Boolean,
+) {
+    val knobDiameter = COLOR_TRACK_KNOB_DIAMETER_DP
+    val knobHitSize = COLOR_TRACK_KNOB_HIT_SIZE_DP
+    val knobCenterX = COLOR_TRACK_HORIZONTAL_PADDING_DP + COLOR_TRACK_DRAW_WIDTH_DP * value.coerceIn(0f, 1f)
+    val knobOffsetX = knobCenterX - knobHitSize / 2f
+    val knobOffsetY = COLOR_TRACK_TOUCH_HEIGHT_DP / 2f - knobHitSize / 2f
+
+    Box(
+        modifier =
+            Modifier
+                .offset(x = knobOffsetX, y = knobOffsetY)
+                .size(knobHitSize)
+                .spatialHoverEffect {
+                    val isActive = it.isActive || dragging
+                    animation(tween(durationMillis = 160)) {
+                        scale(if (isActive) COLOR_TRACK_KNOB_HOVER_SCALE else 1f)
+                    }
+                    alpha(1f)
+                },
+        contentAlignment = Alignment.Center,
+    ) {
+        Canvas(modifier = Modifier.size(knobDiameter)) {
+            drawSelectionMarker(
+                center = Offset(size.width * 0.5f, size.height * 0.5f),
+                color = color,
+                scale = 1f,
+            )
+        }
+    }
+}
+
+@Composable
+private fun ColorSwatch(
+    modifier: Modifier = Modifier,
+    color: Color,
+    selected: Boolean,
+    shape: Shape,
+    onClick: () -> Unit,
+) {
+    Box(
+        modifier =
+            modifier
+                .spatialHoverEffect {
+                    val isActive = it.isActive
+                    animation(tween(durationMillis = 160)) {
+                        scale(if (isActive) 1.16f else 1f)
+                    }
+                    alpha(if (isActive || selected) 1f else 0.94f)
+                }
+                .size(if (selected) 34.dp else 28.dp)
+                .border(
+                    width = if (selected) 3.dp else 1.5.dp,
+                    color = if (selected) Color.White else Color(0x88FFFFFF),
+                    shape = shape,
+                )
+                .background(color, shape)
+                .clickable(onClick = onClick),
+    )
 }
 
 @Composable
@@ -226,10 +549,43 @@ private fun BrushOptionButton(
     }
 }
 
+@Composable
+private fun BrushSizeOptionButton(
+    label: String,
+    dotSize: Dp,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    Button(onClick = onClick) {
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier =
+                    Modifier
+                        .size(18.dp)
+                        .border(1.dp, Color(0x55FFFFFF), CircleShape)
+                        .background(Color.Transparent, CircleShape),
+                contentAlignment = Alignment.Center,
+            ) {
+                Box(
+                    modifier =
+                        Modifier
+                            .size(dotSize)
+                            .background(Color.White, CircleShape),
+                )
+            }
+            Text(text = if (selected) "[$label]" else label)
+        }
+    }
+}
+
 private class PaintSceneState {
     private val sceneRoot = Entity().apply { setName("PaintSceneRoot") }
     private val leftInput = HandDrawInputState(HandSide.Left)
     private val rightInput = HandDrawInputState(HandSide.Right)
+    private val activeUiPointers = mutableSetOf<PointerId>()
     private val leftStroke =
         DynamicBrushHand(
             handName = "Left",
@@ -240,14 +596,9 @@ private class PaintSceneState {
             handName = "Right",
             cursorColor = Color4.fromLinearHex("0xffd166ff"),
         )
-    private var currentBrushConfig =
-        BrushConfig(
-            color = BrushColorPreset.Coral.color,
-            radius = BrushSizePreset.Medium.radius,
-            mode = BrushMode.Tube,
-        )
-
     private var attached = false
+    private var panelInteractionActive = false
+    private var uiBlockUntilUptimeMillis = 0L
 
     fun attach(content: SpatialViewContent) {
         if (attached) return
@@ -263,6 +614,7 @@ private class PaintSceneState {
     ) {
         eventList.forEach { event ->
             if (event.targetedEntity == null) return@forEach
+            trackUiPointer(event)
 
             when (resolveHandSide(event, handTrackingData)) {
                 HandSide.Left -> leftInput.onUiPointerEvent(event)
@@ -277,6 +629,7 @@ private class PaintSceneState {
 
     fun update(handTrackingData: HandTrackingData) {
         val now = SystemClock.uptimeMillis()
+        val uiInteractionActive = panelInteractionActive || activeUiPointers.isNotEmpty() || now < uiBlockUntilUptimeMillis
 
         if (handTrackingData.left == null) {
             leftInput.reset()
@@ -285,22 +638,43 @@ private class PaintSceneState {
             rightInput.reset()
         }
 
-        leftInput.updateLongPinchState(handTrackingData.left, now)
-        rightInput.updateLongPinchState(handTrackingData.right, now)
+        leftInput.updateLongPinchState(handTrackingData.left, now, uiInteractionActive)
+        rightInput.updateLongPinchState(handTrackingData.right, now, uiInteractionActive)
 
         leftStroke.update(handTrackingData.left, sceneRoot, leftInput.shouldDraw)
         rightStroke.update(handTrackingData.right, sceneRoot, rightInput.shouldDraw)
     }
 
-    fun setBrushConfig(config: BrushConfig) {
-        currentBrushConfig = config
-        leftStroke.setBrushConfig(config)
-        rightStroke.setBrushConfig(config)
+    fun setBrushConfig(
+        handSide: HandSide,
+        config: BrushConfig,
+    ) {
+        when (handSide) {
+            HandSide.Left -> leftStroke.setBrushConfig(config)
+            HandSide.Right -> rightStroke.setBrushConfig(config)
+        }
     }
 
     fun clear() {
         leftStroke.clear()
         rightStroke.clear()
+    }
+
+    fun setPanelInteractionActive(active: Boolean) {
+        panelInteractionActive = active
+        if (active) {
+            uiBlockUntilUptimeMillis = SystemClock.uptimeMillis() + UI_POINTER_DRAW_BLOCK_HOLD_MS
+            leftInput.cancelDrawingForUi()
+            rightInput.cancelDrawingForUi()
+        }
+    }
+
+    private fun trackUiPointer(event: SpatialPointerInfo) {
+        uiBlockUntilUptimeMillis = SystemClock.uptimeMillis() + UI_POINTER_DRAW_BLOCK_HOLD_MS
+        when {
+            event.isUpEvent() || !event.pressed -> activeUiPointers.remove(event.pointerId)
+            else -> activeUiPointers.add(event.pointerId)
+        }
     }
 }
 
@@ -322,7 +696,7 @@ private class DynamicBrushHand(
         )
     private var brushConfig =
         BrushConfig(
-            color = BrushColorPreset.Coral.color,
+            color = DEFAULT_RIGHT_BRUSH_COLOR.toColor4(),
             radius = BrushSizePreset.Medium.radius,
             mode = BrushMode.Tube,
         )
@@ -491,8 +865,9 @@ private class HandDrawInputState(
     fun updateLongPinchState(
         handPose: HandPose?,
         nowUptimeMillis: Long,
+        uiInteractionActive: Boolean,
     ) {
-        if (uiPressed || handPose == null) {
+        if (uiPressed || uiInteractionActive || handPose == null) {
             pinchHoldStartUptimeMillis = null
             shouldDraw = false
             return
@@ -531,27 +906,47 @@ private class HandDrawInputState(
         pinchHoldStartUptimeMillis = null
         shouldDraw = false
     }
+
+    fun cancelDrawingForUi() {
+        pinchHoldStartUptimeMillis = null
+        shouldDraw = false
+    }
 }
 
 private enum class BrushSizePreset(
     val label: String,
     val radius: Float,
+    val dotSize: Dp,
 ) {
-    Small("细", 0.0055f),
-    Medium("中", 0.008f),
-    Large("粗", 0.012f),
+    Small("细", 0.0055f, 5.dp),
+    Medium("中", 0.008f, 8.dp),
+    Large("粗", 0.012f, 11.dp),
 }
 
-private enum class BrushColorPreset(
-    val label: String,
-    val color: Color4,
+private data class BrushColorState(
+    val hue: Float,
+    val saturation: Float,
+    val value: Float,
 ) {
-    Coral("珊瑚", Color4.fromLinearHex("0xff6b57ff")),
-    Sky("天蓝", Color4.fromLinearHex("0x4e8cffFF")),
-    Mint("薄荷", Color4.fromLinearHex("0x47d7acff")),
-    Gold("金色", Color4.fromLinearHex("0xf6c445ff")),
-    Violet("紫色", Color4.fromLinearHex("0xa779ffff")),
-    White("白色", Color4.fromLinearHex("0xf5f7ffff")),
+    val uiColor: Color
+        get() = Color(AndroidColor.HSVToColor(floatArrayOf(normalizeHue(hue), saturation, value)))
+
+    fun toColor4(): Color4 {
+        val linearColor = uiColor.convert(ColorSpaces.LinearSrgb)
+        return Color4(linearColor.red, linearColor.green, linearColor.blue, linearColor.alpha)
+    }
+
+    companion object {
+        fun fromUiColor(color: Color): BrushColorState {
+            val hsv = FloatArray(3)
+            AndroidColor.colorToHSV(color.toArgb(), hsv)
+            return BrushColorState(
+                hue = normalizeHue(hsv[0]),
+                saturation = hsv[1].coerceIn(0f, 1f),
+                value = hsv[2].coerceIn(0f, 1f),
+            )
+        }
+    }
 }
 
 private interface BrushStroke {
@@ -1085,8 +1480,50 @@ private fun HandPose.pinchDistance(): Float {
 
 private fun com.pico.spatial.ui.geometry.Offset3D.toVector3(): Vector3 = Vector3(x, y, z)
 
-private const val PINCH_START_DISTANCE_M = 0.02f
-private const val PINCH_RELEASE_DISTANCE_M = 0.03f
+private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawSelectionMarker(
+    center: Offset,
+    color: Color,
+    scale: Float = 1f,
+) {
+    val outerRadius = TRUE_COLOR_WHEEL_MARKER_OUTER_RADIUS_PX * scale
+    val innerRadius = TRUE_COLOR_WHEEL_MARKER_INNER_RADIUS_PX * scale
+    if (scale > 1.01f) {
+        drawCircle(
+            color = Color.White.copy(alpha = 0.34f),
+            radius = outerRadius + TRUE_COLOR_WHEEL_MARKER_HOVER_HALO_PX,
+            center = center,
+        )
+        drawCircle(
+            color = Color.White.copy(alpha = 0.82f),
+            radius = outerRadius + TRUE_COLOR_WHEEL_MARKER_HOVER_RING_PX,
+            center = center,
+            style = androidx.compose.ui.graphics.drawscope.Stroke(width = 3f),
+        )
+    }
+    drawCircle(
+        color = Color.Black.copy(alpha = 0.42f),
+        radius = outerRadius + 2f * scale,
+        center = center,
+    )
+    drawCircle(
+        color = Color.White,
+        radius = outerRadius,
+        center = center,
+    )
+    drawCircle(
+        color = color,
+        radius = innerRadius,
+        center = center,
+    )
+}
+
+private fun normalizeHue(hue: Float): Float {
+    val normalized = hue % 360f
+    return if (normalized < 0f) normalized + 360f else normalized
+}
+
+private const val PINCH_START_DISTANCE_M = 0.018f
+private const val PINCH_RELEASE_DISTANCE_M = 0.026f
 private const val BRUSH_RADIUS_M = 0.008f
 private const val CURSOR_BASE_RADIUS_M = 0.012f
 private const val MIN_POINT_SPACING_M = 0.004f
@@ -1101,9 +1538,38 @@ private const val END_TRANSITION_DISTANCE_M = 0.10f
 private const val END_CAP_LENGTH_M = 0.018f
 private const val END_CAP_SAMPLE_COUNT = 5
 private const val LONG_PINCH_ACTIVATION_MS = 450L
-private const val CONTROL_PANEL_ATTACHMENT_ID = "brush_control_panel"
-private val CONTROL_PANEL_POSITION = Vector3(0.34f, 1.30f, -0.58f)
+private const val LEFT_CONTROL_PANEL_ATTACHMENT_ID = "left_brush_control_panel"
+private const val RIGHT_CONTROL_PANEL_ATTACHMENT_ID = "right_brush_control_panel"
+private val LEFT_CONTROL_PANEL_POSITION = Vector3(-0.38f, 1.12f, -0.58f)
+private val RIGHT_CONTROL_PANEL_POSITION = Vector3(0.38f, 1.12f, -0.58f)
 private const val CONTROL_PANEL_SCALE = 1.0f
+private val DEFAULT_LEFT_BRUSH_COLOR = BrushColorState.fromUiColor(Color(0xFF4E8CFF))
+private val DEFAULT_RIGHT_BRUSH_COLOR = BrushColorState.fromUiColor(Color(0xFFFF7A59))
+private val HUE_TRACK_COLORS =
+    listOf(
+        Color.Red,
+        Color.Yellow,
+        Color.Green,
+        Color.Cyan,
+        Color.Blue,
+        Color.Magenta,
+        Color.Red,
+    )
+private val COLOR_TRACK_WIDTH_DP = 248.dp
+private val COLOR_TRACK_TOUCH_HEIGHT_DP = 34.dp
+private val COLOR_TRACK_HEIGHT_DP = 14.dp
+private val COLOR_TRACK_KNOB_DIAMETER_DP = 28.dp
+private val COLOR_TRACK_KNOB_HIT_SIZE_DP = 52.dp
+private val COLOR_TRACK_HORIZONTAL_PADDING_DP = 14.dp
+private val COLOR_TRACK_DRAW_WIDTH_DP = 220.dp
+private const val COLOR_TRACK_HORIZONTAL_PADDING_PX = 14f
+private const val COLOR_TRACK_DRAW_WIDTH_PX = 220f
+private const val COLOR_TRACK_KNOB_HOVER_SCALE = 1.78f
+private const val TRUE_COLOR_WHEEL_MARKER_OUTER_RADIUS_PX = 11.5f
+private const val TRUE_COLOR_WHEEL_MARKER_INNER_RADIUS_PX = 7f
+private const val TRUE_COLOR_WHEEL_MARKER_HOVER_HALO_PX = 10f
+private const val TRUE_COLOR_WHEEL_MARKER_HOVER_RING_PX = 6f
+private const val UI_POINTER_DRAW_BLOCK_HOLD_MS = 180L
 private const val UV_REPEAT_DISTANCE_M = 0.03f
 private const val EPSILON_M = 0.0001f
 private const val TAU_F = (PI * 2.0).toFloat()
