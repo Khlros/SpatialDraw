@@ -173,6 +173,7 @@ fun DrawerHomeScreen(modifier: Modifier = Modifier) {
                             leftPanelState.collapse()
                         },
                         onInteractionChanged = { leftPanelInteracting = it },
+                        onUndo = { paintScene.undoLastStroke(HandSide.Left) },
                     )
                 }
                 AttachmentPanel(
@@ -192,6 +193,7 @@ fun DrawerHomeScreen(modifier: Modifier = Modifier) {
                             rightPanelState.collapse()
                         },
                         onInteractionChanged = { rightPanelInteracting = it },
+                        onUndo = { paintScene.undoLastStroke(HandSide.Right) },
                         onClear = { paintScene.clear() },
                     )
                 }
@@ -225,6 +227,7 @@ private fun HandBrushPanel(
     onModeSelected: (BrushMode) -> Unit,
     onCollapseRequest: () -> Unit,
     onInteractionChanged: (Boolean) -> Unit,
+    onUndo: () -> Unit,
     onClear: (() -> Unit)? = null,
 ) {
     DisposableEffect(Unit) {
@@ -266,6 +269,7 @@ private fun HandBrushPanel(
                     onModeSelected = onModeSelected,
                     onCollapseRequest = onCollapseRequest,
                     onInteractionChanged = onInteractionChanged,
+                    onUndo = onUndo,
                     onClear = onClear,
                 )
             }
@@ -284,6 +288,7 @@ private fun ExpandedHandBrushPanel(
     onModeSelected: (BrushMode) -> Unit,
     onCollapseRequest: () -> Unit,
     onInteractionChanged: (Boolean) -> Unit,
+    onUndo: () -> Unit,
     onClear: (() -> Unit)? = null,
 ) {
     Column(
@@ -358,11 +363,17 @@ private fun ExpandedHandBrushPanel(
             onColorSelected = onColorSelected,
         )
 
-        onClear?.let { clearAction ->
-            Button(onClick = clearAction) {
-                Text(text = "Clear Stroke")
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = onUndo) {
+                Text(text = "撤销上一步")
+            }
+            onClear?.let { clearAction ->
+                Button(onClick = clearAction) {
+                    Text(text = "Clear Stroke")
+                }
             }
         }
+
     }
 }
 
@@ -719,6 +730,8 @@ private class PaintSceneState {
     private var attached = false
     private var panelInteractionActive = false
     private var uiBlockUntilUptimeMillis = 0L
+    private var leftUndoGestureLatched = false
+    private var rightUndoGestureLatched = false
 
     fun attach(content: SpatialViewContent) {
         if (attached) return
@@ -760,6 +773,20 @@ private class PaintSceneState {
 
         leftInput.updateLongPinchState(handTrackingData.left, now, uiInteractionActive)
         rightInput.updateLongPinchState(handTrackingData.right, now, uiInteractionActive)
+        leftUndoGestureLatched =
+            updateUndoGesture(
+                handPose = handTrackingData.left,
+                inputState = leftInput,
+                currentLatch = leftUndoGestureLatched,
+                onUndo = { leftStroke.undoLastStroke() },
+            )
+        rightUndoGestureLatched =
+            updateUndoGesture(
+                handPose = handTrackingData.right,
+                inputState = rightInput,
+                currentLatch = rightUndoGestureLatched,
+                onUndo = { rightStroke.undoLastStroke() },
+            )
 
         leftStroke.update(handTrackingData.left, sceneRoot, leftInput.shouldDraw)
         rightStroke.update(handTrackingData.right, sceneRoot, rightInput.shouldDraw)
@@ -782,6 +809,13 @@ private class PaintSceneState {
         rightStroke.clear()
     }
 
+    fun undoLastStroke(handSide: HandSide) {
+        when (handSide) {
+            HandSide.Left -> leftStroke.undoLastStroke()
+            HandSide.Right -> rightStroke.undoLastStroke()
+        }
+    }
+
     fun setPanelInteractionActive(active: Boolean) {
         panelInteractionActive = active
         if (active) {
@@ -797,6 +831,20 @@ private class PaintSceneState {
             event.isUpEvent() || !event.pressed -> activeUiPointers.remove(event.pointerId)
             else -> activeUiPointers.add(event.pointerId)
         }
+    }
+
+    private fun updateUndoGesture(
+        handPose: HandPose?,
+        inputState: HandDrawInputState,
+        currentLatch: Boolean,
+        onUndo: () -> Unit,
+    ): Boolean {
+        val undoGestureActive =
+            handPose?.thumbMiddleDistance()?.let { it <= UNDO_GESTURE_DISTANCE_M } == true
+        if (undoGestureActive && !currentLatch && !inputState.shouldDraw) {
+            onUndo()
+        }
+        return undoGestureActive
     }
 }
 
@@ -899,6 +947,17 @@ private class DynamicBrushHand(
         finishedStrokes.clear()
         strokesRoot.removeAllChildren()
         drawActive = false
+    }
+
+    fun undoLastStroke() {
+        if (activeStroke != null) {
+            activeStroke?.dispose()
+            activeStroke = null
+            drawActive = false
+            return
+        }
+
+        finishedStrokes.removeLastOrNull()?.dispose()
     }
 
     private fun beginStroke(startPoint: Vector3): BrushStroke {
@@ -2046,6 +2105,12 @@ private fun HandPose.thumbLittleDistance(): Float {
     return Vector3.distance(thumbTip.position, littleTip.position)
 }
 
+private fun HandPose.thumbMiddleDistance(): Float {
+    val thumbTip = this[HandJoint.Index.THUMB_TIP]
+    val middleTip = this[HandJoint.Index.MIDDLE_TIP]
+    return Vector3.distance(thumbTip.position, middleTip.position)
+}
+
 private fun HandPose.panelForwardDirection(): Vector3 {
     val wrist = this[HandJoint.Index.WRIST].position
     val palm = this[HandJoint.Index.PALM].position
@@ -2152,6 +2217,7 @@ private const val PANEL_TRANSFORM_LERP = 0.22f
 private const val PANEL_ORB_FORWARD_OFFSET_M = 0.05f
 private const val PANEL_EXPANDED_FORWARD_OFFSET_M = 0.15f
 private const val PANEL_EXPAND_GESTURE_DISTANCE_M = 0.028f
+private const val UNDO_GESTURE_DISTANCE_M = 0.028f
 private val DEFAULT_LEFT_BRUSH_COLOR = BrushColorState.fromUiColor(Color(0xFF4E8CFF))
 private val DEFAULT_RIGHT_BRUSH_COLOR = BrushColorState.fromUiColor(Color(0xFFFF7A59))
 private val HUE_TRACK_COLORS =
