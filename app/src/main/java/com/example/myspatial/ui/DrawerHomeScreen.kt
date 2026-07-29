@@ -2324,6 +2324,7 @@ private enum class BrushMaterialPreset {
     Metal,
     Fabric,
     Plastic,
+    Unlit,
 }
 
 private enum class HandSide {
@@ -3653,17 +3654,15 @@ private fun createBrushMaterial(
     textureSelection: TextureCropSelection?,
     opacity: Float,
     materialPreset: BrushMaterialPreset,
-): PhysicallyBasedMaterial {
+): Material {
     val resolvedOpacity = opacity.coerceIn(0.05f, 1f)
-    val material =
-        PhysicallyBasedMaterial.create(
-            if (resolvedOpacity < 0.995f) BlendingMode.TRANSPARENT else BlendingMode.OPAQUE,
-        )
+    val blendingMode = if (resolvedOpacity < 0.995f) BlendingMode.TRANSPARENT else BlendingMode.OPAQUE
     val baseColor =
         when (materialPreset) {
             BrushMaterialPreset.Metal -> mixColors(color.uiColor, Color(0xFFB8BDC7), 0.18f)
             BrushMaterialPreset.Fabric -> mixColors(color.uiColor, Color(0xFF6C7078), 0.24f)
             BrushMaterialPreset.Plastic -> color.uiColor
+            BrushMaterialPreset.Unlit -> color.uiColor
         }.copy(alpha = resolvedOpacity)
     val textureBitmap =
         if (colorMode == BrushColorMode.Texture) {
@@ -3671,6 +3670,23 @@ private fun createBrushMaterial(
         } else {
             null
         }
+    if (materialPreset == BrushMaterialPreset.Unlit) {
+        val material =
+            UnlitMaterial.create(blendingMode)
+        if (textureBitmap != null) {
+            material.setBaseColor(Color.White.copy(alpha = baseColor.alpha).toLinearColor4())
+            runCatching { TextureResource.create(textureBitmap) }
+                .onSuccess { material.setBaseColorTexture(it) }
+                .onFailure {
+                    material.setBaseColor(baseColor.toLinearColor4())
+                }
+        } else {
+            material.setBaseColor(baseColor.toLinearColor4())
+        }
+        return material
+    }
+    val material =
+        PhysicallyBasedMaterial.create(blendingMode)
     if (textureBitmap != null) {
         material.setBaseColor(Color.White.copy(alpha = baseColor.alpha).toLinearColor4())
         runCatching { TextureResource.create(textureBitmap) }
@@ -3694,6 +3710,7 @@ private fun createBrushMaterial(
             material.setMetallic(0.04f)
             material.setRoughness(0.34f)
         }
+        BrushMaterialPreset.Unlit -> Unit
     }
     material.setAmbientOcclusion(1f)
     return material
@@ -3772,7 +3789,23 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawMaterialSphere(
             BrushMaterialPreset.Metal -> mixColors(previewColor, Color(0xFFC0C6D0), 0.24f)
             BrushMaterialPreset.Fabric -> mixColors(previewColor, Color(0xFF727884), 0.26f)
             BrushMaterialPreset.Plastic -> previewColor
+            BrushMaterialPreset.Unlit -> previewColor
         }
+
+    if (preset == BrushMaterialPreset.Unlit) {
+        drawCircle(
+            color = baseTint,
+            radius = radius,
+            center = center,
+        )
+        drawCircle(
+            color = if (selected) Color.White.copy(alpha = 0.72f) else Color.White.copy(alpha = 0.22f),
+            radius = radius,
+            center = center,
+            style = androidx.compose.ui.graphics.drawscope.Stroke(width = if (selected) 3f else 2f),
+        )
+        return
+    }
 
     drawCheckerSphereBackground(center = center, radius = radius * 1.02f)
     drawCircle(
@@ -3790,6 +3823,8 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawMaterialSphere(
                             )
                         BrushMaterialPreset.Plastic ->
                             listOf(Color.White.copy(alpha = 0.84f), baseTint, mixColors(baseTint, Color.Black, 0.10f))
+                        BrushMaterialPreset.Unlit ->
+                            listOf(baseTint, baseTint, baseTint)
                     },
                 center = topLight,
                 radius = size.minDimension * 0.82f,
@@ -3822,6 +3857,7 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawMaterialSphere(
             BrushMaterialPreset.Metal -> 0.60f
             BrushMaterialPreset.Fabric -> 0.10f
             BrushMaterialPreset.Plastic -> 0.46f
+            BrushMaterialPreset.Unlit -> 0f
         }),
         radius = radius * 0.26f,
         center = topLight,
@@ -4100,4 +4136,5 @@ private val BRUSH_MATERIAL_PRESETS =
         BrushMaterialPreset.Metal,
         BrushMaterialPreset.Fabric,
         BrushMaterialPreset.Plastic,
+        BrushMaterialPreset.Unlit,
     )
