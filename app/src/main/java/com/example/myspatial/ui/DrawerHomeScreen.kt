@@ -22,10 +22,12 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
@@ -35,6 +37,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -126,12 +129,14 @@ fun DrawerHomeScreen(modifier: Modifier = Modifier) {
     var leftSelectedColor by remember { mutableStateOf(DEFAULT_LEFT_BRUSH_COLOR) }
     var leftColorMode by remember { mutableStateOf(BrushColorMode.PureColor) }
     var leftTextureSelection by remember { mutableStateOf<TextureCropSelection?>(null) }
+    var leftOpacity by remember { mutableStateOf(DEFAULT_BRUSH_OPACITY) }
     var leftBrushRadius by remember { mutableStateOf(DEFAULT_BRUSH_RADIUS_M) }
     var leftSelectedMode by remember { mutableStateOf(BrushMode.Tube) }
     var leftSelectedMaterial by remember { mutableStateOf(BrushMaterialPreset.Metal) }
     var rightSelectedColor by remember { mutableStateOf(DEFAULT_RIGHT_BRUSH_COLOR) }
     var rightColorMode by remember { mutableStateOf(BrushColorMode.PureColor) }
     var rightTextureSelection by remember { mutableStateOf<TextureCropSelection?>(null) }
+    var rightOpacity by remember { mutableStateOf(DEFAULT_BRUSH_OPACITY) }
     var rightBrushRadius by remember { mutableStateOf(DEFAULT_BRUSH_RADIUS_M) }
     var rightSelectedMode by remember { mutableStateOf(BrushMode.Tube) }
     var rightSelectedMaterial by remember { mutableStateOf(BrushMaterialPreset.Metal) }
@@ -141,10 +146,11 @@ fun DrawerHomeScreen(modifier: Modifier = Modifier) {
         handSide = HandSide.Left,
         config =
             BrushConfig(
-                color = leftSelectedColor.toColor4(),
+                color = leftSelectedColor.uiColor.copy(alpha = leftOpacity).toLinearColor4(),
                 displayColor = leftSelectedColor,
                 colorMode = leftColorMode,
                 textureSelection = leftTextureSelection,
+                opacity = leftOpacity,
                 radius = leftBrushRadius,
                 mode = leftSelectedMode,
                 materialPreset = leftSelectedMaterial,
@@ -157,6 +163,7 @@ fun DrawerHomeScreen(modifier: Modifier = Modifier) {
                 color = leftSelectedColor,
                 colorMode = leftColorMode,
                 textureSelection = leftTextureSelection,
+                opacity = leftOpacity,
                 radius = leftBrushRadius,
                 mode = leftSelectedMode,
                 materialPreset = leftSelectedMaterial,
@@ -166,10 +173,11 @@ fun DrawerHomeScreen(modifier: Modifier = Modifier) {
         handSide = HandSide.Right,
         config =
             BrushConfig(
-                color = rightSelectedColor.toColor4(),
+                color = rightSelectedColor.uiColor.copy(alpha = rightOpacity).toLinearColor4(),
                 displayColor = rightSelectedColor,
                 colorMode = rightColorMode,
                 textureSelection = rightTextureSelection,
+                opacity = rightOpacity,
                 radius = rightBrushRadius,
                 mode = rightSelectedMode,
                 materialPreset = rightSelectedMaterial,
@@ -182,6 +190,7 @@ fun DrawerHomeScreen(modifier: Modifier = Modifier) {
                 color = rightSelectedColor,
                 colorMode = rightColorMode,
                 textureSelection = rightTextureSelection,
+                opacity = rightOpacity,
                 radius = rightBrushRadius,
                 mode = rightSelectedMode,
                 materialPreset = rightSelectedMaterial,
@@ -240,6 +249,7 @@ fun DrawerHomeScreen(modifier: Modifier = Modifier) {
                         brushRadius = leftBrushRadius,
                         selectedMode = leftSelectedMode,
                         selectedMaterial = leftSelectedMaterial,
+                        opacity = leftOpacity,
                         selectedColorMode = leftColorMode,
                         textureSelection = leftTextureSelection,
                         onColorSelected = { leftSelectedColor = it },
@@ -249,6 +259,7 @@ fun DrawerHomeScreen(modifier: Modifier = Modifier) {
                         onBrushRadiusChange = { leftBrushRadius = it },
                         onModeSelected = { leftSelectedMode = it },
                         onMaterialSelected = { leftSelectedMaterial = it },
+                        onOpacityChange = { leftOpacity = it },
                         onCollapseRequest = {
                             leftPanelInteracting = false
                             leftPanelState.collapse()
@@ -268,6 +279,7 @@ fun DrawerHomeScreen(modifier: Modifier = Modifier) {
                         brushRadius = rightBrushRadius,
                         selectedMode = rightSelectedMode,
                         selectedMaterial = rightSelectedMaterial,
+                        opacity = rightOpacity,
                         selectedColorMode = rightColorMode,
                         textureSelection = rightTextureSelection,
                         onColorSelected = { rightSelectedColor = it },
@@ -277,6 +289,7 @@ fun DrawerHomeScreen(modifier: Modifier = Modifier) {
                         onBrushRadiusChange = { rightBrushRadius = it },
                         onModeSelected = { rightSelectedMode = it },
                         onMaterialSelected = { rightSelectedMaterial = it },
+                        onOpacityChange = { rightOpacity = it },
                         onCollapseRequest = {
                             rightPanelInteracting = false
                             rightPanelState.collapse()
@@ -346,6 +359,7 @@ private fun HandBrushPanel(
     brushRadius: Float,
     selectedMode: BrushMode,
     selectedMaterial: BrushMaterialPreset,
+    opacity: Float,
     selectedColorMode: BrushColorMode,
     textureSelection: TextureCropSelection?,
     onColorSelected: (BrushColorState) -> Unit,
@@ -355,6 +369,7 @@ private fun HandBrushPanel(
     onBrushRadiusChange: (Float) -> Unit,
     onModeSelected: (BrushMode) -> Unit,
     onMaterialSelected: (BrushMaterialPreset) -> Unit,
+    onOpacityChange: (Float) -> Unit,
     onCollapseRequest: () -> Unit,
     onInteractionChanged: (Boolean) -> Unit,
     onUndo: () -> Unit,
@@ -376,8 +391,18 @@ private fun HandBrushPanel(
         animationSpec = composeTween(durationMillis = 220),
         label = "panel_width",
     )
+    val panelHeight by animateDpAsState(
+        targetValue = if (collapsed) COLLAPSED_PANEL_SIZE_DP else CONTROL_PANEL_HEIGHT_DP,
+        animationSpec = composeTween(durationMillis = 220),
+        label = "panel_height",
+    )
 
-    Box(modifier = Modifier.width(panelWidth)) {
+    Box(
+        modifier =
+            Modifier
+                .width(panelWidth)
+                .height(panelHeight),
+    ) {
         Crossfade(
             targetState = collapsed,
             animationSpec = composeTween(durationMillis = 220),
@@ -395,6 +420,7 @@ private fun HandBrushPanel(
                     brushRadius = brushRadius,
                     selectedMode = selectedMode,
                     selectedMaterial = selectedMaterial,
+                    opacity = opacity,
                     selectedColorMode = selectedColorMode,
                     textureSelection = textureSelection,
                     onColorSelected = onColorSelected,
@@ -404,6 +430,7 @@ private fun HandBrushPanel(
                     onBrushRadiusChange = onBrushRadiusChange,
                     onModeSelected = onModeSelected,
                     onMaterialSelected = onMaterialSelected,
+                    onOpacityChange = onOpacityChange,
                     onCollapseRequest = onCollapseRequest,
                     onInteractionChanged = onInteractionChanged,
                     onUndo = onUndo,
@@ -421,6 +448,7 @@ private fun ExpandedHandBrushPanel(
     brushRadius: Float,
     selectedMode: BrushMode,
     selectedMaterial: BrushMaterialPreset,
+    opacity: Float,
     selectedColorMode: BrushColorMode,
     textureSelection: TextureCropSelection?,
     onColorSelected: (BrushColorState) -> Unit,
@@ -430,15 +458,18 @@ private fun ExpandedHandBrushPanel(
     onBrushRadiusChange: (Float) -> Unit,
     onModeSelected: (BrushMode) -> Unit,
     onMaterialSelected: (BrushMaterialPreset) -> Unit,
+    onOpacityChange: (Float) -> Unit,
     onCollapseRequest: () -> Unit,
     onInteractionChanged: (Boolean) -> Unit,
     onUndo: () -> Unit,
     onClear: (() -> Unit)? = null,
 ) {
+    val scrollState = rememberScrollState()
     Column(
         modifier =
             Modifier
                 .width(CONTROL_PANEL_WIDTH_DP)
+                .fillMaxHeight()
                 .background(Color(0xCC1B1D24))
                 .pointerInput(Unit) {
                     awaitEachGesture {
@@ -459,87 +490,102 @@ private fun ExpandedHandBrushPanel(
         verticalArrangement = Arrangement.spacedBy(8.dp),
         horizontalAlignment = Alignment.Start,
     ) {
-        Row(
-            modifier = Modifier.width(CONTROL_PANEL_WIDTH_DP - 36.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
+        Column(
+            modifier =
+                Modifier
+                    .height(CONTROL_PANEL_SCROLL_CONTENT_HEIGHT_DP)
+                    .verticalScroll(scrollState),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalAlignment = Alignment.Start,
         ) {
-            Text(text = title, style = PicoTheme.typography.titleLarge, color = Color.White)
-            Button(onClick = onCollapseRequest) {
-                Text(text = "收起")
-            }
-        }
-        Text(
-            text = "双侧都缩小时，直接 pinch 即可绘画；面板展开时仍需 long pinch。拇指碰小拇指可展开或收起。",
-            style = PicoTheme.typography.bodyMedium,
-            color = Color.White,
-        )
-
-        Text(text = "笔刷", style = PicoTheme.typography.titleMedium, color = Color.White)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            BrushOptionButton(
-                label = "动态线",
-                selected = selectedMode == BrushMode.Tube,
-                onClick = { onModeSelected(BrushMode.Tube) },
-            )
-            BrushOptionButton(
-                label = "圆球虚线",
-                selected = selectedMode == BrushMode.SphereSteps,
-                onClick = { onModeSelected(BrushMode.SphereSteps) },
-            )
-            BrushOptionButton(
-                label = "圆球",
-                selected = selectedMode == BrushMode.GrowingSphere,
-                onClick = { onModeSelected(BrushMode.GrowingSphere) },
-            )
-            BrushOptionButton(
-                label = "直线",
-                selected = selectedMode == BrushMode.StraightLine,
-                onClick = { onModeSelected(BrushMode.StraightLine) },
-            )
-        }
-
-        Text(text = "示例", style = PicoTheme.typography.titleMedium, color = Color.White)
-        Spacer(modifier = Modifier.height(BRUSH_PREVIEW_PANEL_CLEARANCE_DP))
-        BrushSizeControl(
-            radius = brushRadius,
-            onRadiusChange = onBrushRadiusChange,
-        )
-
-        Text(text = "材质", style = PicoTheme.typography.titleMedium, color = Color.White)
-        MaterialPresetPicker(
-            selectedMaterial = selectedMaterial,
-            previewColor = selectedColor.uiColor,
-            onMaterialSelected = onMaterialSelected,
-        )
-
-        Text(text = "颜色", style = PicoTheme.typography.titleMedium, color = Color.White)
-        ColorSourcePicker(
-            selectedMode = selectedColorMode,
-            textureSelection = textureSelection,
-            selectedColor = selectedColor,
-            onColorModeSelected = onColorModeSelected,
-            onTextureSelectionChanged = onTextureSelectionChanged,
-            onTextureUploadRequest = onTextureUploadRequest,
-        )
-        if (selectedColorMode == BrushColorMode.PureColor) {
-            TripleColorTrackPalette(
-                selectedColor = selectedColor,
-                onColorSelected = onColorSelected,
-            )
-        }
-
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = onUndo) {
-                Text(text = "撤销上一步")
-            }
-            onClear?.let { clearAction ->
-                Button(onClick = clearAction) {
-                    Text(text = "清除画布")
+            Row(
+                modifier = Modifier.width(CONTROL_PANEL_WIDTH_DP - 36.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(text = title, style = PicoTheme.typography.titleLarge, color = Color.White)
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Button(onClick = onUndo) {
+                        Text(text = "撤销")
+                    }
+                    onClear?.let { clearAction ->
+                        Button(onClick = clearAction) {
+                            Text(text = "清空")
+                        }
+                    }
+                    Button(onClick = onCollapseRequest) {
+                        Text(text = "收起")
+                    }
                 }
             }
-        }
+            Text(
+                text = "双侧都缩小时，直接 pinch 即可绘画；面板展开时仍需 long pinch。拇指碰小拇指可展开或收起。",
+                style = PicoTheme.typography.bodyMedium,
+                color = Color.White,
+            )
 
+            Text(text = "笔刷", style = PicoTheme.typography.titleMedium, color = Color.White)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                BrushOptionButton(
+                    label = "动态线",
+                    selected = selectedMode == BrushMode.Tube,
+                    onClick = { onModeSelected(BrushMode.Tube) },
+                )
+                BrushOptionButton(
+                    label = "圆球虚线",
+                    selected = selectedMode == BrushMode.SphereSteps,
+                    onClick = { onModeSelected(BrushMode.SphereSteps) },
+                )
+                BrushOptionButton(
+                    label = "圆球",
+                    selected = selectedMode == BrushMode.GrowingSphere,
+                    onClick = { onModeSelected(BrushMode.GrowingSphere) },
+                )
+                BrushOptionButton(
+                    label = "直线",
+                    selected = selectedMode == BrushMode.StraightLine,
+                    onClick = { onModeSelected(BrushMode.StraightLine) },
+                )
+            }
+
+            Text(text = "示例", style = PicoTheme.typography.titleMedium, color = Color.White)
+            Spacer(modifier = Modifier.height(BRUSH_PREVIEW_PANEL_CLEARANCE_DP))
+            BrushSizeControl(
+                radius = brushRadius,
+                onRadiusChange = onBrushRadiusChange,
+            )
+
+            Text(text = "材质", style = PicoTheme.typography.titleMedium, color = Color.White)
+            MaterialPresetPicker(
+                selectedMaterial = selectedMaterial,
+                previewColor = selectedColor.uiColor,
+                onMaterialSelected = onMaterialSelected,
+            )
+            ColorTrackSlider(
+                label = "透明",
+                value = opacity,
+                valueText = "${(opacity * 100f).roundToInt()}%",
+                knobColor = Color.White,
+                gradientColors = OPACITY_TRACK_COLORS,
+                trackWidth = BRUSH_SIZE_TRACK_WIDTH_DP,
+                onValueChange = onOpacityChange,
+            )
+
+            Text(text = "颜色", style = PicoTheme.typography.titleMedium, color = Color.White)
+            ColorSourcePicker(
+                selectedMode = selectedColorMode,
+                textureSelection = textureSelection,
+                selectedColor = selectedColor,
+                onColorModeSelected = onColorModeSelected,
+                onTextureUploadRequest = onTextureUploadRequest,
+            )
+            if (selectedColorMode == BrushColorMode.PureColor) {
+                TripleColorTrackPalette(
+                    selectedColor = selectedColor,
+                    onColorSelected = onColorSelected,
+                )
+            }
+        }
     }
 }
 
@@ -903,7 +949,6 @@ private fun ColorSourcePicker(
     textureSelection: TextureCropSelection?,
     selectedColor: BrushColorState,
     onColorModeSelected: (BrushColorMode) -> Unit,
-    onTextureSelectionChanged: (TextureCropSelection?) -> Unit,
     onTextureUploadRequest: () -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -918,18 +963,13 @@ private fun ColorSourcePicker(
                 selected = selectedMode == BrushColorMode.Texture,
                 onClick = { onColorModeSelected(BrushColorMode.Texture) },
             )
-            if (selectedMode == BrushColorMode.Texture) {
-                Button(onClick = onTextureUploadRequest) {
-                    Text(text = if (textureSelection == null) "上传纹理" else "更换图片")
-                }
-            }
         }
 
         if (selectedMode == BrushColorMode.Texture) {
             TextureCropEditor(
                 selection = textureSelection,
                 fallbackColor = selectedColor.uiColor,
-                onTextureSelectionChanged = onTextureSelectionChanged,
+                onTextureUploadRequest = onTextureUploadRequest,
             )
         }
     }
@@ -939,18 +979,36 @@ private fun ColorSourcePicker(
 private fun TextureCropEditor(
     selection: TextureCropSelection?,
     fallbackColor: Color,
-    onTextureSelectionChanged: (TextureCropSelection?) -> Unit,
+    onTextureUploadRequest: () -> Unit,
 ) {
     if (selection == null) {
-        Box(
-            modifier =
-                Modifier
-                    .size(TEXTURE_CROP_PREVIEW_SIZE_DP)
-                    .border(1.5.dp, Color.White.copy(alpha = 0.22f), CircleShape)
-                    .background(fallbackColor.copy(alpha = 0.18f), CircleShape),
-            contentAlignment = Alignment.Center,
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(text = "贴图", style = PicoTheme.typography.bodyMedium, color = Color.White.copy(alpha = 0.84f))
+            Box(
+                modifier =
+                    Modifier
+                        .size(TEXTURE_CROP_PREVIEW_SIZE_DP)
+                        .border(1.5.dp, Color.White.copy(alpha = 0.22f), CircleShape)
+                        .background(fallbackColor.copy(alpha = 0.18f), CircleShape),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(text = "贴图", style = PicoTheme.typography.bodyMedium, color = Color.White.copy(alpha = 0.84f))
+            }
+            Column(
+                modifier = Modifier.width(CONTROL_PANEL_WIDTH_DP - TEXTURE_CROP_PREVIEW_SIZE_DP - 48.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Button(onClick = onTextureUploadRequest) {
+                    Text(text = "上传纹理")
+                }
+                Text(
+                    text = "上传后可在弹出面板中裁切",
+                    style = PicoTheme.typography.bodyMedium,
+                    color = Color.White.copy(alpha = 0.72f),
+                )
+            }
         }
         return
     }
@@ -968,6 +1026,9 @@ private fun TextureCropEditor(
             modifier = Modifier.width(CONTROL_PANEL_WIDTH_DP - TEXTURE_CROP_PREVIEW_SIZE_DP - 48.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
+            Button(onClick = onTextureUploadRequest) {
+                Text(text = "更换图片")
+            }
             Text(
                 text = "裁切请在上传面板中调整",
                 style = PicoTheme.typography.bodyMedium,
@@ -1820,6 +1881,7 @@ private data class BrushPreviewStyle(
     val color: BrushColorState,
     val colorMode: BrushColorMode,
     val textureSelection: TextureCropSelection?,
+    val opacity: Float,
     val radius: Float,
     val mode: BrushMode,
     val materialPreset: BrushMaterialPreset,
@@ -1891,6 +1953,7 @@ private class BrushPreview3D(
                     color = style.color,
                     colorMode = style.colorMode,
                     textureSelection = style.textureSelection,
+                    opacity = style.opacity,
                     materialPreset = style.materialPreset,
                 ),
             ).apply {
@@ -1908,6 +1971,7 @@ private class BrushPreview3D(
                 color = style.color,
                 colorMode = style.colorMode,
                 textureSelection = style.textureSelection,
+                opacity = style.opacity,
                 materialPreset = style.materialPreset,
             )
         samplePointsForSpherePreview(
@@ -1941,6 +2005,7 @@ private class BrushPreview3D(
                     color = style.color,
                     colorMode = style.colorMode,
                     textureSelection = style.textureSelection,
+                    opacity = style.opacity,
                     materialPreset = style.materialPreset,
                 ),
             ).apply {
@@ -1970,6 +2035,7 @@ private class BrushPreview3D(
                     color = style.color,
                     colorMode = style.colorMode,
                     textureSelection = style.textureSelection,
+                    opacity = style.opacity,
                     materialPreset = style.materialPreset,
                 ),
             ).apply {
@@ -2054,6 +2120,7 @@ private class DynamicBrushHand(
             displayColor = DEFAULT_RIGHT_BRUSH_COLOR,
             colorMode = BrushColorMode.PureColor,
             textureSelection = null,
+            opacity = DEFAULT_BRUSH_OPACITY,
             radius = DEFAULT_BRUSH_RADIUS_M,
             mode = BrushMode.Tube,
             materialPreset = BrushMaterialPreset.Metal,
@@ -2160,6 +2227,7 @@ private class DynamicBrushHand(
                                 color = brushConfig.displayColor,
                                 colorMode = brushConfig.colorMode,
                                 textureSelection = brushConfig.textureSelection,
+                                opacity = brushConfig.opacity,
                                 materialPreset = brushConfig.materialPreset,
                             ),
                         parent = strokesRoot,
@@ -2173,6 +2241,7 @@ private class DynamicBrushHand(
                                 color = brushConfig.displayColor,
                                 colorMode = brushConfig.colorMode,
                                 textureSelection = brushConfig.textureSelection,
+                                opacity = brushConfig.opacity,
                                 materialPreset = brushConfig.materialPreset,
                             ),
                         parent = strokesRoot,
@@ -2186,6 +2255,7 @@ private class DynamicBrushHand(
                                 color = brushConfig.displayColor,
                                 colorMode = brushConfig.colorMode,
                                 textureSelection = brushConfig.textureSelection,
+                                opacity = brushConfig.opacity,
                                 materialPreset = brushConfig.materialPreset,
                             ),
                         parent = strokesRoot,
@@ -2199,6 +2269,7 @@ private class DynamicBrushHand(
                                 color = brushConfig.displayColor,
                                 colorMode = brushConfig.colorMode,
                                 textureSelection = brushConfig.textureSelection,
+                                opacity = brushConfig.opacity,
                                 materialPreset = brushConfig.materialPreset,
                             ),
                         parent = strokesRoot,
@@ -2231,6 +2302,7 @@ private data class BrushConfig(
     val displayColor: BrushColorState,
     val colorMode: BrushColorMode,
     val textureSelection: TextureCropSelection?,
+    val opacity: Float,
     val radius: Float,
     val mode: BrushMode,
     val materialPreset: BrushMaterialPreset,
@@ -2252,7 +2324,6 @@ private enum class BrushMaterialPreset {
     Metal,
     Fabric,
     Plastic,
-    Translucent,
 }
 
 private enum class HandSide {
@@ -3580,19 +3651,20 @@ private fun createBrushMaterial(
     color: BrushColorState,
     colorMode: BrushColorMode,
     textureSelection: TextureCropSelection?,
+    opacity: Float,
     materialPreset: BrushMaterialPreset,
 ): PhysicallyBasedMaterial {
+    val resolvedOpacity = opacity.coerceIn(0.05f, 1f)
     val material =
         PhysicallyBasedMaterial.create(
-            if (materialPreset == BrushMaterialPreset.Translucent) BlendingMode.TRANSPARENT else BlendingMode.OPAQUE,
+            if (resolvedOpacity < 0.995f) BlendingMode.TRANSPARENT else BlendingMode.OPAQUE,
         )
     val baseColor =
         when (materialPreset) {
             BrushMaterialPreset.Metal -> mixColors(color.uiColor, Color(0xFFB8BDC7), 0.18f)
             BrushMaterialPreset.Fabric -> mixColors(color.uiColor, Color(0xFF6C7078), 0.24f)
             BrushMaterialPreset.Plastic -> color.uiColor
-            BrushMaterialPreset.Translucent -> color.uiColor.copy(alpha = 0.4f)
-        }
+        }.copy(alpha = resolvedOpacity)
     val textureBitmap =
         if (colorMode == BrushColorMode.Texture) {
             textureSelection?.toTextureBitmap()
@@ -3621,10 +3693,6 @@ private fun createBrushMaterial(
         BrushMaterialPreset.Plastic -> {
             material.setMetallic(0.04f)
             material.setRoughness(0.34f)
-        }
-        BrushMaterialPreset.Translucent -> {
-            material.setMetallic(0f)
-            material.setRoughness(0.08f)
         }
     }
     material.setAmbientOcclusion(1f)
@@ -3695,100 +3763,99 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawMaterialSphere(
     selected: Boolean,
 ) {
     val center = Offset(size.width * 0.5f, size.height * 0.5f)
-    val radius = size.minDimension * 0.40f
-    val highlightCenter = Offset(size.width * 0.34f, size.height * 0.28f)
-    val shadowCenter = Offset(size.width * 0.66f, size.height * 0.72f)
+    val radius = size.minDimension * 0.37f
+    val topLight = Offset(size.width * 0.34f, size.height * 0.27f)
+    val bottomShade = Offset(size.width * 0.68f, size.height * 0.74f)
+    val rimCenter = Offset(size.width * 0.54f, size.height * 0.45f)
     val baseTint =
         when (preset) {
-            BrushMaterialPreset.Metal -> mixColors(previewColor, Color(0xFFB8BDC7), 0.18f)
-            BrushMaterialPreset.Fabric -> mixColors(previewColor, Color(0xFF6C7078), 0.24f)
-            BrushMaterialPreset.Plastic -> previewColor.copy(alpha = 1f)
-            BrushMaterialPreset.Translucent -> previewColor.copy(alpha = 0.55f)
+            BrushMaterialPreset.Metal -> mixColors(previewColor, Color(0xFFC0C6D0), 0.24f)
+            BrushMaterialPreset.Fabric -> mixColors(previewColor, Color(0xFF727884), 0.26f)
+            BrushMaterialPreset.Plastic -> previewColor
         }
 
+    drawCheckerSphereBackground(center = center, radius = radius * 1.02f)
     drawCircle(
         brush =
             Brush.radialGradient(
                 colors =
                     when (preset) {
                         BrushMaterialPreset.Metal ->
-                            listOf(
-                                Color.White.copy(alpha = 0.95f),
-                                baseTint,
-                                Color(0xFF5A606C),
-                            )
+                            listOf(Color.White.copy(alpha = 0.96f), baseTint, Color(0xFF505766))
                         BrushMaterialPreset.Fabric ->
                             listOf(
-                                baseTint.copy(alpha = 0.95f),
+                                mixColors(baseTint, Color.White, 0.12f),
                                 baseTint,
-                                baseTint.copy(alpha = 0.82f),
+                                mixColors(baseTint, Color.Black, 0.18f),
                             )
                         BrushMaterialPreset.Plastic ->
-                            listOf(
-                                Color.White.copy(alpha = 0.85f),
-                                baseTint,
-                                baseTint.copy(alpha = 0.88f),
-                            )
-                        BrushMaterialPreset.Translucent ->
-                            listOf(
-                                Color.White.copy(alpha = 0.65f),
-                                baseTint,
-                                baseTint.copy(alpha = 0.22f),
-                            )
+                            listOf(Color.White.copy(alpha = 0.84f), baseTint, mixColors(baseTint, Color.Black, 0.10f))
                     },
-                center = highlightCenter,
-                radius = size.minDimension * 0.78f,
+                center = topLight,
+                radius = size.minDimension * 0.82f,
             ),
         radius = radius,
         center = center,
     )
-    if (preset == BrushMaterialPreset.Fabric) {
-        drawCircle(
-            brush =
-                Brush.radialGradient(
-                    colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.12f)),
-                    center = shadowCenter,
-                    radius = size.minDimension * 0.65f,
-                ),
-            radius = radius,
-            center = center,
-        )
-    } else {
-        drawCircle(
-            brush =
-                Brush.radialGradient(
-                    colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.18f)),
-                    center = shadowCenter,
-                    radius = size.minDimension * 0.7f,
-                ),
-            radius = radius,
-            center = center,
-        )
-    }
     drawCircle(
-        color =
-            when (preset) {
-                BrushMaterialPreset.Metal -> Color.White.copy(alpha = 0.55f)
-                BrushMaterialPreset.Fabric -> Color.White.copy(alpha = 0.14f)
-                BrushMaterialPreset.Plastic -> Color.White.copy(alpha = 0.48f)
-                BrushMaterialPreset.Translucent -> Color.White.copy(alpha = 0.34f)
-            },
-        radius = radius * 0.28f,
-        center = highlightCenter,
+        brush =
+            Brush.radialGradient(
+                colors = listOf(Color.Transparent, Color.Black.copy(alpha = if (preset == BrushMaterialPreset.Fabric) 0.14f else 0.22f)),
+                center = bottomShade,
+                radius = size.minDimension * 0.74f,
+            ),
+        radius = radius,
+        center = center,
     )
-    if (preset == BrushMaterialPreset.Translucent) {
-        drawCircle(
-            color = Color.White.copy(alpha = 0.12f),
-            radius = radius * 0.68f,
-            center = center,
-        )
-    }
+    drawCircle(
+        brush =
+            Brush.radialGradient(
+                colors = listOf(Color.White.copy(alpha = if (preset == BrushMaterialPreset.Fabric) 0.10f else 0.22f), Color.Transparent),
+                center = rimCenter,
+                radius = radius,
+            ),
+        radius = radius,
+        center = center,
+    )
+    drawCircle(
+        color = Color.White.copy(alpha = when (preset) {
+            BrushMaterialPreset.Metal -> 0.60f
+            BrushMaterialPreset.Fabric -> 0.10f
+            BrushMaterialPreset.Plastic -> 0.46f
+        }),
+        radius = radius * 0.26f,
+        center = topLight,
+    )
+    drawCircle(
+        color = Color.Black.copy(alpha = 0.22f),
+        radius = radius,
+        center = center + Offset(0f, radius * 0.10f),
+        style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.5f),
+    )
     drawCircle(
         color = if (selected) Color.White.copy(alpha = 0.72f) else Color.White.copy(alpha = 0.22f),
         radius = radius,
         center = center,
         style = androidx.compose.ui.graphics.drawscope.Stroke(width = if (selected) 3f else 2f),
     )
+}
+
+private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawCheckerSphereBackground(
+    center: Offset,
+    radius: Float,
+) {
+    val cell = radius * 0.42f
+    for (row in -2..2) {
+        for (column in -2..2) {
+            val left = center.x - radius + column * cell
+            val top = center.y - radius + row * cell
+            drawRect(
+                color = if ((row + column) % 2 == 0) Color.White.copy(alpha = 0.10f) else Color.White.copy(alpha = 0.04f),
+                topLeft = Offset(left, top),
+                size = Size(cell, cell),
+            )
+        }
+    }
 }
 
 private fun resolveHandSide(
@@ -3843,7 +3910,7 @@ private fun HandPose.collapsedOrbWorldPosition(): Vector3 {
 
 private fun HandPose.expandedPanelWorldPosition(): Vector3 {
     val palm = this[HandJoint.Index.PALM].position
-    return palm + panelForwardDirection() * PANEL_EXPANDED_FORWARD_OFFSET_M
+    return palm + panelForwardDirection() * PANEL_EXPANDED_FORWARD_OFFSET_M + Vector3.UP * PANEL_EXPANDED_VERTICAL_OFFSET_M
 }
 
 private fun HandPose.pinchDistance(): Float {
@@ -3899,8 +3966,8 @@ private fun normalizeHue(hue: Float): Float {
 private const val PINCH_START_DISTANCE_M = 0.018f
 private const val PINCH_RELEASE_DISTANCE_M = 0.026f
 private const val DEFAULT_BRUSH_RADIUS_M = 0.008f
-private const val MIN_BRUSH_RADIUS_M = 0.0055f
-private const val MAX_BRUSH_RADIUS_M = 0.012f
+private const val MIN_BRUSH_RADIUS_M = 0.0035f
+private const val MAX_BRUSH_RADIUS_M = 0.018f
 private const val MAX_GROWING_SPHERE_RADIUS_M = 0.3f
 private const val GROWING_SPHERE_GROWTH_SPEED_M_PER_S = 0.22f
 private const val CURSOR_BASE_RADIUS_M = 0.012f
@@ -3930,11 +3997,13 @@ private const val LONG_PINCH_ACTIVATION_MS = 450L
 private const val LEFT_CONTROL_PANEL_ATTACHMENT_ID = "left_brush_control_panel"
 private const val RIGHT_CONTROL_PANEL_ATTACHMENT_ID = "right_brush_control_panel"
 private const val TEXTURE_PICKER_ATTACHMENT_ID = "texture_picker_panel"
-private val LEFT_CONTROL_PANEL_POSITION = Vector3(-0.38f, 1.12f, -0.58f)
-private val RIGHT_CONTROL_PANEL_POSITION = Vector3(0.38f, 1.12f, -0.58f)
+private val LEFT_CONTROL_PANEL_POSITION = Vector3(-0.38f, 1.20f, -0.58f)
+private val RIGHT_CONTROL_PANEL_POSITION = Vector3(0.38f, 1.20f, -0.58f)
 private val TEXTURE_PICKER_PANEL_POSITION = Vector3(0f, 1.12f, -0.50f)
 private const val CONTROL_PANEL_SCALE = 1.0f
-private val CONTROL_PANEL_WIDTH_DP = 380.dp
+private val CONTROL_PANEL_WIDTH_DP = 450.dp
+private val CONTROL_PANEL_HEIGHT_DP = 1120.dp
+private val CONTROL_PANEL_SCROLL_CONTENT_HEIGHT_DP = 940.dp
 private val TEXTURE_PICKER_PANEL_WIDTH_DP = 440.dp
 private val TEXTURE_PICKER_PANEL_HEIGHT_DP = 560.dp
 private val COLLAPSED_PANEL_SIZE_DP = 72.dp
@@ -3942,6 +4011,7 @@ private const val COLLAPSED_PANEL_WORLD_SCALE = 0.32f
 private const val PANEL_TRANSFORM_LERP = 0.22f
 private const val PANEL_ORB_FORWARD_OFFSET_M = 0.05f
 private const val PANEL_EXPANDED_FORWARD_OFFSET_M = 0.15f
+private const val PANEL_EXPANDED_VERTICAL_OFFSET_M = 0.08f
 private const val PANEL_EXPAND_GESTURE_DISTANCE_M = 0.028f
 private const val UNDO_GESTURE_DISTANCE_M = 0.028f
 private const val BRUSH_PREVIEW_LOCAL_SCALE = 1.0f
@@ -4006,12 +4076,19 @@ private const val TRUE_COLOR_WHEEL_MARKER_HOVER_RING_PX = 6f
 private const val UI_POINTER_DRAW_BLOCK_HOLD_MS = 180L
 private const val UV_REPEAT_DISTANCE_M = 0.03f
 private const val EPSILON_M = 0.0001f
+private const val DEFAULT_BRUSH_OPACITY = 1f
 private const val TEXTURE_OUTPUT_SIZE_PX = 512
 private const val MAX_TEXTURE_IMPORT_EDGE_PX = 2048
 private const val MIN_TEXTURE_CROP_SIZE_PX = 192
 private const val MIN_TEXTURE_CROP_SIZE_RATIO = 0.22f
 private const val TEXTURE_CROP_HANDLE_HOVER_SCALE = 1.45f
 private const val TAU_F = (PI * 2.0).toFloat()
+private val OPACITY_TRACK_COLORS =
+    listOf(
+        Color.White.copy(alpha = 0.16f),
+        Color.White.copy(alpha = 0.45f),
+        Color.White.copy(alpha = 1f),
+    )
 private val TEXTURE_CROP_TRACK_COLORS =
     listOf(
         Color(0xFF3E4656),
@@ -4023,5 +4100,4 @@ private val BRUSH_MATERIAL_PRESETS =
         BrushMaterialPreset.Metal,
         BrushMaterialPreset.Fabric,
         BrushMaterialPreset.Plastic,
-        BrushMaterialPreset.Translucent,
     )
