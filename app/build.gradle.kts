@@ -54,6 +54,11 @@ android {
 }
 
 dependencies {
+    implementation("androidx.activity:activity-compose:1.9.2") {
+        exclude(group = "androidx.compose.ui", module = "ui")
+        exclude(group = "androidx.compose.ui", module = "ui-graphics")
+        exclude(group = "androidx.compose.ui", module = "ui-text")
+    }
     implementation(platform("com.pico.spatial:bom:0.13.3"))
     implementation("com.pico.spatial.core:core")
     implementation("com.pico.spatial.tracking:tracking")

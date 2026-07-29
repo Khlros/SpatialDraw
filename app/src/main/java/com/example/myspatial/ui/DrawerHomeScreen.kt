@@ -1,7 +1,19 @@
 package com.example.myspatial.ui
 
+import android.Manifest
+import android.content.ContentUris
+import android.content.Context
+import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.ImageDecoder
 import android.graphics.Color as AndroidColor
+import android.net.Uri
+import android.os.Build
 import android.os.SystemClock
+import android.provider.MediaStore
+import android.util.Size as AndroidSize
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween as composeTween
@@ -10,22 +22,30 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
@@ -37,17 +57,21 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.colorspace.ColorSpaces
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.PointerId
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.ui.layout.onSizeChanged
+import androidx.core.content.ContextCompat
 import com.pico.spatial.core.container.SpatialViewContent
 import com.pico.spatial.core.ecs.BoundingBox
 import com.pico.spatial.core.ecs.Entity
@@ -58,6 +82,7 @@ import com.pico.spatial.core.ecs.resource.Material
 import com.pico.spatial.core.ecs.resource.MeshModel
 import com.pico.spatial.core.ecs.resource.MeshResource
 import com.pico.spatial.core.ecs.resource.PhysicallyBasedMaterial
+import com.pico.spatial.core.ecs.resource.TextureResource
 import com.pico.spatial.core.ecs.resource.UnlitMaterial
 import com.pico.spatial.core.math.Color4
 import com.pico.spatial.core.math.Quat
@@ -76,6 +101,8 @@ import com.pico.spatial.ui.foundation.gesture.data.InteractionKind
 import com.pico.spatial.ui.foundation.gesture.detectSpatialPointerEvent
 import com.pico.spatial.ui.foundation.hover.spatialHoverEffect
 import com.pico.spatial.ui.foundation.hover.tween
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlin.math.PI
 import kotlin.math.acos
 import kotlin.math.abs
@@ -97,19 +124,30 @@ fun DrawerHomeScreen(modifier: Modifier = Modifier) {
     var leftPanelInteracting by remember { mutableStateOf(false) }
     var rightPanelInteracting by remember { mutableStateOf(false) }
     var leftSelectedColor by remember { mutableStateOf(DEFAULT_LEFT_BRUSH_COLOR) }
+    var leftColorMode by remember { mutableStateOf(BrushColorMode.PureColor) }
+    var leftTextureSelection by remember { mutableStateOf<TextureCropSelection?>(null) }
     var leftBrushRadius by remember { mutableStateOf(DEFAULT_BRUSH_RADIUS_M) }
     var leftSelectedMode by remember { mutableStateOf(BrushMode.Tube) }
+    var leftSelectedMaterial by remember { mutableStateOf(BrushMaterialPreset.Metal) }
     var rightSelectedColor by remember { mutableStateOf(DEFAULT_RIGHT_BRUSH_COLOR) }
+    var rightColorMode by remember { mutableStateOf(BrushColorMode.PureColor) }
+    var rightTextureSelection by remember { mutableStateOf<TextureCropSelection?>(null) }
     var rightBrushRadius by remember { mutableStateOf(DEFAULT_BRUSH_RADIUS_M) }
     var rightSelectedMode by remember { mutableStateOf(BrushMode.Tube) }
+    var rightSelectedMaterial by remember { mutableStateOf(BrushMaterialPreset.Metal) }
+    var texturePickerTargetHand by remember { mutableStateOf<HandSide?>(null) }
 
     paintScene.setBrushConfig(
         handSide = HandSide.Left,
         config =
             BrushConfig(
                 color = leftSelectedColor.toColor4(),
+                displayColor = leftSelectedColor,
+                colorMode = leftColorMode,
+                textureSelection = leftTextureSelection,
                 radius = leftBrushRadius,
                 mode = leftSelectedMode,
+                materialPreset = leftSelectedMaterial,
             ),
     )
     paintScene.setBrushPreviewStyle(
@@ -117,8 +155,11 @@ fun DrawerHomeScreen(modifier: Modifier = Modifier) {
         style =
             BrushPreviewStyle(
                 color = leftSelectedColor,
+                colorMode = leftColorMode,
+                textureSelection = leftTextureSelection,
                 radius = leftBrushRadius,
                 mode = leftSelectedMode,
+                materialPreset = leftSelectedMaterial,
             ),
     )
     paintScene.setBrushConfig(
@@ -126,8 +167,12 @@ fun DrawerHomeScreen(modifier: Modifier = Modifier) {
         config =
             BrushConfig(
                 color = rightSelectedColor.toColor4(),
+                displayColor = rightSelectedColor,
+                colorMode = rightColorMode,
+                textureSelection = rightTextureSelection,
                 radius = rightBrushRadius,
                 mode = rightSelectedMode,
+                materialPreset = rightSelectedMaterial,
             ),
     )
     paintScene.setBrushPreviewStyle(
@@ -135,11 +180,14 @@ fun DrawerHomeScreen(modifier: Modifier = Modifier) {
         style =
             BrushPreviewStyle(
                 color = rightSelectedColor,
+                colorMode = rightColorMode,
+                textureSelection = rightTextureSelection,
                 radius = rightBrushRadius,
                 mode = rightSelectedMode,
+                materialPreset = rightSelectedMaterial,
             ),
     )
-    paintScene.setPanelInteractionActive(leftPanelInteracting || rightPanelInteracting)
+    paintScene.setPanelInteractionActive(leftPanelInteracting || rightPanelInteracting || texturePickerTargetHand != null)
 
     DisposableEffect(handTrackingProvider) {
         handTrackingProvider.start()
@@ -175,6 +223,11 @@ fun DrawerHomeScreen(modifier: Modifier = Modifier) {
                     rightPanelState.applyTransform(panel)
                     content.addEntity(panel)
                 }
+                attachments.entity(TEXTURE_PICKER_ATTACHMENT_ID)?.let { panel ->
+                    applyFixedPanelTransform(panel, TEXTURE_PICKER_PANEL_POSITION)
+                    panel.enabled = false
+                    content.addEntity(panel)
+                }
             },
             attachments = {
                 AttachmentPanel(
@@ -186,9 +239,16 @@ fun DrawerHomeScreen(modifier: Modifier = Modifier) {
                         selectedColor = leftSelectedColor,
                         brushRadius = leftBrushRadius,
                         selectedMode = leftSelectedMode,
+                        selectedMaterial = leftSelectedMaterial,
+                        selectedColorMode = leftColorMode,
+                        textureSelection = leftTextureSelection,
                         onColorSelected = { leftSelectedColor = it },
+                        onColorModeSelected = { leftColorMode = it },
+                        onTextureSelectionChanged = { leftTextureSelection = it },
+                        onTextureUploadRequest = { texturePickerTargetHand = HandSide.Left },
                         onBrushRadiusChange = { leftBrushRadius = it },
                         onModeSelected = { leftSelectedMode = it },
+                        onMaterialSelected = { leftSelectedMaterial = it },
                         onCollapseRequest = {
                             leftPanelInteracting = false
                             leftPanelState.collapse()
@@ -207,9 +267,16 @@ fun DrawerHomeScreen(modifier: Modifier = Modifier) {
                         selectedColor = rightSelectedColor,
                         brushRadius = rightBrushRadius,
                         selectedMode = rightSelectedMode,
+                        selectedMaterial = rightSelectedMaterial,
+                        selectedColorMode = rightColorMode,
+                        textureSelection = rightTextureSelection,
                         onColorSelected = { rightSelectedColor = it },
+                        onColorModeSelected = { rightColorMode = it },
+                        onTextureSelectionChanged = { rightTextureSelection = it },
+                        onTextureUploadRequest = { texturePickerTargetHand = HandSide.Right },
                         onBrushRadiusChange = { rightBrushRadius = it },
                         onModeSelected = { rightSelectedMode = it },
+                        onMaterialSelected = { rightSelectedMaterial = it },
                         onCollapseRequest = {
                             rightPanelInteracting = false
                             rightPanelState.collapse()
@@ -217,6 +284,27 @@ fun DrawerHomeScreen(modifier: Modifier = Modifier) {
                         onInteractionChanged = { rightPanelInteracting = it },
                         onUndo = { paintScene.undoLastStroke(HandSide.Right) },
                         onClear = { paintScene.clear() },
+                    )
+                }
+                AttachmentPanel(
+                    id = TEXTURE_PICKER_ATTACHMENT_ID,
+                ) {
+                    TexturePickerAttachmentPanel(
+                        handSide = texturePickerTargetHand,
+                        onDismiss = { texturePickerTargetHand = null },
+                        onTextureSelected = { targetHand, selection ->
+                            when (targetHand) {
+                                HandSide.Left -> {
+                                    leftTextureSelection = selection
+                                    leftColorMode = BrushColorMode.Texture
+                                }
+                                HandSide.Right -> {
+                                    rightTextureSelection = selection
+                                    rightColorMode = BrushColorMode.Texture
+                                }
+                            }
+                            texturePickerTargetHand = null
+                        },
                     )
                 }
             },
@@ -231,6 +319,12 @@ fun DrawerHomeScreen(modifier: Modifier = Modifier) {
                     handPose = handTrackingData.right,
                     worldToScene = { point -> paintScene.worldToSceneLocal(point) },
                 )
+                attachments.entity(TEXTURE_PICKER_ATTACHMENT_ID)?.let { panel ->
+                    panel.enabled = texturePickerTargetHand != null
+                    if (panel.enabled) {
+                        applyFixedPanelTransform(panel, TEXTURE_PICKER_PANEL_POSITION)
+                    }
+                }
                 paintScene.update(
                     handTrackingData = handTrackingData,
                     allowInstantPinchDrawing = leftPanelState.collapsed && rightPanelState.collapsed,
@@ -251,9 +345,16 @@ private fun HandBrushPanel(
     selectedColor: BrushColorState,
     brushRadius: Float,
     selectedMode: BrushMode,
+    selectedMaterial: BrushMaterialPreset,
+    selectedColorMode: BrushColorMode,
+    textureSelection: TextureCropSelection?,
     onColorSelected: (BrushColorState) -> Unit,
+    onColorModeSelected: (BrushColorMode) -> Unit,
+    onTextureSelectionChanged: (TextureCropSelection?) -> Unit,
+    onTextureUploadRequest: () -> Unit,
     onBrushRadiusChange: (Float) -> Unit,
     onModeSelected: (BrushMode) -> Unit,
+    onMaterialSelected: (BrushMaterialPreset) -> Unit,
     onCollapseRequest: () -> Unit,
     onInteractionChanged: (Boolean) -> Unit,
     onUndo: () -> Unit,
@@ -293,9 +394,16 @@ private fun HandBrushPanel(
                     selectedColor = selectedColor,
                     brushRadius = brushRadius,
                     selectedMode = selectedMode,
+                    selectedMaterial = selectedMaterial,
+                    selectedColorMode = selectedColorMode,
+                    textureSelection = textureSelection,
                     onColorSelected = onColorSelected,
+                    onColorModeSelected = onColorModeSelected,
+                    onTextureSelectionChanged = onTextureSelectionChanged,
+                    onTextureUploadRequest = onTextureUploadRequest,
                     onBrushRadiusChange = onBrushRadiusChange,
                     onModeSelected = onModeSelected,
+                    onMaterialSelected = onMaterialSelected,
                     onCollapseRequest = onCollapseRequest,
                     onInteractionChanged = onInteractionChanged,
                     onUndo = onUndo,
@@ -312,9 +420,16 @@ private fun ExpandedHandBrushPanel(
     selectedColor: BrushColorState,
     brushRadius: Float,
     selectedMode: BrushMode,
+    selectedMaterial: BrushMaterialPreset,
+    selectedColorMode: BrushColorMode,
+    textureSelection: TextureCropSelection?,
     onColorSelected: (BrushColorState) -> Unit,
+    onColorModeSelected: (BrushColorMode) -> Unit,
+    onTextureSelectionChanged: (TextureCropSelection?) -> Unit,
+    onTextureUploadRequest: () -> Unit,
     onBrushRadiusChange: (Float) -> Unit,
     onModeSelected: (BrushMode) -> Unit,
+    onMaterialSelected: (BrushMaterialPreset) -> Unit,
     onCollapseRequest: () -> Unit,
     onInteractionChanged: (Boolean) -> Unit,
     onUndo: () -> Unit,
@@ -391,11 +506,28 @@ private fun ExpandedHandBrushPanel(
             onRadiusChange = onBrushRadiusChange,
         )
 
-        Text(text = "颜色", style = PicoTheme.typography.titleMedium, color = Color.White)
-        TripleColorTrackPalette(
-            selectedColor = selectedColor,
-            onColorSelected = onColorSelected,
+        Text(text = "材质", style = PicoTheme.typography.titleMedium, color = Color.White)
+        MaterialPresetPicker(
+            selectedMaterial = selectedMaterial,
+            previewColor = selectedColor.uiColor,
+            onMaterialSelected = onMaterialSelected,
         )
+
+        Text(text = "颜色", style = PicoTheme.typography.titleMedium, color = Color.White)
+        ColorSourcePicker(
+            selectedMode = selectedColorMode,
+            textureSelection = textureSelection,
+            selectedColor = selectedColor,
+            onColorModeSelected = onColorModeSelected,
+            onTextureSelectionChanged = onTextureSelectionChanged,
+            onTextureUploadRequest = onTextureUploadRequest,
+        )
+        if (selectedColorMode == BrushColorMode.PureColor) {
+            TripleColorTrackPalette(
+                selectedColor = selectedColor,
+                onColorSelected = onColorSelected,
+            )
+        }
 
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = onUndo) {
@@ -711,6 +843,775 @@ private fun BrushOptionButton(
 }
 
 @Composable
+private fun MaterialPresetPicker(
+    selectedMaterial: BrushMaterialPreset,
+    previewColor: Color,
+    onMaterialSelected: (BrushMaterialPreset) -> Unit,
+) {
+    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        BRUSH_MATERIAL_PRESETS.forEach { preset ->
+            MaterialSphereButton(
+                previewColor = previewColor,
+                preset = preset,
+                selected = preset == selectedMaterial,
+                onClick = { onMaterialSelected(preset) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun MaterialSphereButton(
+    previewColor: Color,
+    preset: BrushMaterialPreset,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    Box(
+        modifier =
+            Modifier
+                .spatialHoverEffect {
+                    val isActive = it.isActive
+                    animation(tween(durationMillis = 160)) {
+                        scale(if (isActive) 1.08f else 1f)
+                    }
+                    alpha(1f)
+                }
+                .size(MATERIAL_SWATCH_SIZE_DP)
+                .border(
+                    width = if (selected) 3.dp else 1.5.dp,
+                    color = if (selected) Color.White else Color.White.copy(alpha = 0.22f),
+                    shape = CircleShape,
+                )
+                .background(Color.Transparent, CircleShape)
+                .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            drawMaterialSphere(
+                preset = preset,
+                previewColor = previewColor,
+                selected = selected,
+            )
+        }
+    }
+}
+
+@Composable
+private fun ColorSourcePicker(
+    selectedMode: BrushColorMode,
+    textureSelection: TextureCropSelection?,
+    selectedColor: BrushColorState,
+    onColorModeSelected: (BrushColorMode) -> Unit,
+    onTextureSelectionChanged: (TextureCropSelection?) -> Unit,
+    onTextureUploadRequest: () -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            BrushOptionButton(
+                label = "纯色",
+                selected = selectedMode == BrushColorMode.PureColor,
+                onClick = { onColorModeSelected(BrushColorMode.PureColor) },
+            )
+            BrushOptionButton(
+                label = "纹理",
+                selected = selectedMode == BrushColorMode.Texture,
+                onClick = { onColorModeSelected(BrushColorMode.Texture) },
+            )
+            if (selectedMode == BrushColorMode.Texture) {
+                Button(onClick = onTextureUploadRequest) {
+                    Text(text = if (textureSelection == null) "上传纹理" else "更换图片")
+                }
+            }
+        }
+
+        if (selectedMode == BrushColorMode.Texture) {
+            TextureCropEditor(
+                selection = textureSelection,
+                fallbackColor = selectedColor.uiColor,
+                onTextureSelectionChanged = onTextureSelectionChanged,
+            )
+        }
+    }
+}
+
+@Composable
+private fun TextureCropEditor(
+    selection: TextureCropSelection?,
+    fallbackColor: Color,
+    onTextureSelectionChanged: (TextureCropSelection?) -> Unit,
+) {
+    if (selection == null) {
+        Box(
+            modifier =
+                Modifier
+                    .size(TEXTURE_CROP_PREVIEW_SIZE_DP)
+                    .border(1.5.dp, Color.White.copy(alpha = 0.22f), CircleShape)
+                    .background(fallbackColor.copy(alpha = 0.18f), CircleShape),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(text = "贴图", style = PicoTheme.typography.bodyMedium, color = Color.White.copy(alpha = 0.84f))
+        }
+        return
+    }
+
+    val cropRect = selection.squareCropRect()
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        TextureCropPreview(
+            selection = selection,
+            cropRect = cropRect,
+        )
+        Column(
+            modifier = Modifier.width(CONTROL_PANEL_WIDTH_DP - TEXTURE_CROP_PREVIEW_SIZE_DP - 48.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                text = "裁切请在上传面板中调整",
+                style = PicoTheme.typography.bodyMedium,
+                color = Color.White.copy(alpha = 0.76f),
+            )
+            Text(
+                text = "${cropRect.size}px",
+                style = PicoTheme.typography.bodyMedium,
+                color = Color.White.copy(alpha = 0.62f),
+            )
+        }
+    }
+}
+
+@Composable
+private fun TextureCropPreview(
+    selection: TextureCropSelection,
+    cropRect: SquareCropRect,
+) {
+    val imageBitmap = remember(selection.sourceBitmap) { selection.sourceBitmap.asImageBitmap() }
+    Box(
+        modifier =
+            Modifier
+                .size(TEXTURE_CROP_PREVIEW_SIZE_DP)
+                .border(2.dp, Color.White.copy(alpha = 0.28f)),
+    ) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            drawImage(
+                image = imageBitmap,
+                srcOffset = IntOffset(cropRect.left, cropRect.top),
+                srcSize = IntSize(cropRect.size, cropRect.size),
+                dstSize = IntSize(size.width.roundToInt(), size.height.roundToInt()),
+            )
+            val third = size.width / 3f
+            drawLine(
+                color = Color.White.copy(alpha = 0.25f),
+                start = Offset(third, 0f),
+                end = Offset(third, size.height),
+                strokeWidth = 1.5f,
+            )
+            drawLine(
+                color = Color.White.copy(alpha = 0.25f),
+                start = Offset(third * 2f, 0f),
+                end = Offset(third * 2f, size.height),
+                strokeWidth = 1.5f,
+            )
+            drawLine(
+                color = Color.White.copy(alpha = 0.25f),
+                start = Offset(0f, third),
+                end = Offset(size.width, third),
+                strokeWidth = 1.5f,
+            )
+            drawLine(
+                color = Color.White.copy(alpha = 0.25f),
+                start = Offset(0f, third * 2f),
+                end = Offset(size.width, third * 2f),
+                strokeWidth = 1.5f,
+            )
+        }
+    }
+}
+
+@Composable
+private fun TexturePickerAttachmentPanel(
+    handSide: HandSide?,
+    onDismiss: () -> Unit,
+    onTextureSelected: (HandSide, TextureCropSelection) -> Unit,
+) {
+    if (handSide == null) {
+        Spacer(modifier = Modifier.size(1.dp))
+        return
+    }
+
+    val context = LocalContext.current
+    val permission = remember { textureReadPermission() }
+    var permissionGranted by remember { mutableStateOf(context.hasPermission(permission)) }
+    var permissionDenied by remember { mutableStateOf(false) }
+    var draftSelection by remember(handSide) { mutableStateOf<TextureCropSelection?>(null) }
+    val permissionLauncher =
+        rememberLauncherForActivityResult(
+            contract = ActivityResultContracts.RequestPermission(),
+        ) { granted ->
+            permissionGranted = granted
+            permissionDenied = !granted
+        }
+
+    DisposableEffect(handSide) {
+        if (!permissionGranted) {
+            permissionLauncher.launch(permission)
+        }
+        onDispose { }
+    }
+
+    val imageItems by produceState<List<TextureImageItem>?>(initialValue = null, permissionGranted) {
+        value =
+            if (permissionGranted) {
+                withContext(Dispatchers.IO) { queryRecentImages(context) }
+            } else {
+                emptyList()
+            }
+    }
+
+    Column(
+        modifier =
+            Modifier
+                .width(TEXTURE_PICKER_PANEL_WIDTH_DP)
+                .height(TEXTURE_PICKER_PANEL_HEIGHT_DP)
+                .background(Color(0xFF12141A), RoundedCornerShape(24.dp))
+                .border(1.5.dp, Color.White.copy(alpha = 0.16f), RoundedCornerShape(24.dp))
+                .padding(18.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text =
+                    when {
+                        draftSelection != null && handSide == HandSide.Left -> "左手纹理裁切"
+                        draftSelection != null && handSide == HandSide.Right -> "右手纹理裁切"
+                        handSide == HandSide.Left -> "左手纹理图片"
+                        else -> "右手纹理图片"
+                    },
+                style = PicoTheme.typography.titleLarge,
+                color = Color.White,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (draftSelection != null) {
+                    Button(onClick = { draftSelection = null }) {
+                        Text(text = "返回")
+                    }
+                }
+                Button(onClick = onDismiss) {
+                    Text(text = "关闭")
+                }
+            }
+        }
+
+        when {
+            !permissionGranted && permissionDenied -> {
+                TextureOverlayState(
+                    text = "需要读取照片权限",
+                    actionText = "重新授权",
+                    onAction = {
+                        permissionDenied = false
+                        permissionLauncher.launch(permission)
+                    },
+                )
+            }
+            !permissionGranted -> {
+                TextureOverlayState(
+                    text = "正在请求照片权限",
+                    actionText = "关闭",
+                    onAction = onDismiss,
+                )
+            }
+            imageItems == null -> {
+                TextureOverlayState(
+                    text = "正在加载照片",
+                    actionText = "关闭",
+                    onAction = onDismiss,
+                )
+            }
+            imageItems.isNullOrEmpty() -> {
+                TextureOverlayState(
+                    text = "没有读取到照片",
+                    actionText = "关闭",
+                    onAction = onDismiss,
+                )
+            }
+            draftSelection != null -> {
+                TextureCropAttachmentEditor(
+                    selection = draftSelection!!,
+                    onSelectionChanged = { draftSelection = it },
+                    onConfirm = {
+                        onTextureSelected(handSide, draftSelection!!)
+                        draftSelection = null
+                    },
+                )
+            }
+            else -> {
+                LazyVerticalGrid(
+                    columns = GridCells.Adaptive(minSize = 120.dp),
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(bottom = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    items(
+                        items = imageItems.orEmpty(),
+                        key = { it.uri.toString() },
+                    ) { item ->
+                        TextureImageCard(
+                            item = item,
+                            onClick = {
+                                val bitmap = loadTextureBitmap(context, item.uri) ?: return@TextureImageCard
+                                draftSelection = TextureCropSelection.createDefault(bitmap)
+                            },
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TextureCropAttachmentEditor(
+    selection: TextureCropSelection,
+    onSelectionChanged: (TextureCropSelection) -> Unit,
+    onConfirm: () -> Unit,
+) {
+    val cropRect = selection.squareCropRect()
+    Column(
+        modifier = Modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        TextureInteractiveCropPreview(
+            selection = selection,
+            onSelectionChanged = onSelectionChanged,
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    text = "拖动左上和右下角调整裁切",
+                    style = PicoTheme.typography.bodyMedium,
+                    color = Color.White.copy(alpha = 0.82f),
+                )
+                Text(
+                    text = "当前 ${cropRect.size}px，最小 ${selection.sourceBitmap.minCropSizePx()}px",
+                    style = PicoTheme.typography.bodyMedium,
+                    color = Color.White.copy(alpha = 0.62f),
+                )
+            }
+            Button(onClick = onConfirm) {
+                Text(text = "使用裁切")
+            }
+        }
+    }
+}
+
+@Composable
+private fun TextureInteractiveCropPreview(
+    selection: TextureCropSelection,
+    onSelectionChanged: (TextureCropSelection) -> Unit,
+) {
+    val imageBitmap = remember(selection.sourceBitmap) { selection.sourceBitmap.asImageBitmap() }
+    val cropRect = selection.squareCropRect()
+    val density = LocalDensity.current
+    Box(
+        modifier =
+            Modifier
+                .size(TEXTURE_CROP_EDITOR_PREVIEW_SIZE_DP)
+                .border(2.dp, Color.White.copy(alpha = 0.22f), RoundedCornerShape(18.dp))
+                .clip(RoundedCornerShape(18.dp)),
+    ) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val metrics = calculateTexturePreviewMetrics(size, selection.sourceBitmap)
+            drawImage(
+                image = imageBitmap,
+                dstOffset = IntOffset(metrics.imageLeftPx.roundToInt(), metrics.imageTopPx.roundToInt()),
+                dstSize = IntSize(metrics.imageWidthPx.roundToInt(), metrics.imageHeightPx.roundToInt()),
+            )
+
+            val cropLeft = metrics.imageLeftPx + cropRect.left * metrics.scale
+            val cropTop = metrics.imageTopPx + cropRect.top * metrics.scale
+            val cropSize = cropRect.size * metrics.scale
+            val cropRight = cropLeft + cropSize
+            val cropBottom = cropTop + cropSize
+
+            drawRect(Color.Black.copy(alpha = 0.48f), topLeft = Offset.Zero, size = Size(size.width, cropTop))
+            drawRect(
+                Color.Black.copy(alpha = 0.48f),
+                topLeft = Offset.Zero,
+                size = Size(cropLeft, size.height),
+            )
+            drawRect(
+                Color.Black.copy(alpha = 0.48f),
+                topLeft = Offset(cropRight, 0f),
+                size = Size(size.width - cropRight, size.height),
+            )
+            drawRect(
+                Color.Black.copy(alpha = 0.48f),
+                topLeft = Offset(0f, cropBottom),
+                size = Size(size.width, size.height - cropBottom),
+            )
+            drawRect(
+                color = Color.White,
+                topLeft = Offset(cropLeft, cropTop),
+                size = Size(cropSize, cropSize),
+                style = androidx.compose.ui.graphics.drawscope.Stroke(width = 3f),
+            )
+        }
+
+        val metrics = remember(selection.sourceBitmap) {
+            TexturePreviewMetrics.fromBitmap(selection.sourceBitmap, with(density) { TEXTURE_CROP_EDITOR_PREVIEW_SIZE_DP.toPx() })
+        }
+        val cropLeftPx = (metrics.imageLeftPx + cropRect.left * metrics.scale).roundToInt()
+        val cropTopPx = (metrics.imageTopPx + cropRect.top * metrics.scale).roundToInt()
+        val cropSizePx = (cropRect.size * metrics.scale).roundToInt()
+        TextureCropMoveRegion(
+            leftPx = cropLeftPx,
+            topPx = cropTopPx,
+            sizePx = cropSizePx,
+            onDrag = { dragX, dragY ->
+                onSelectionChanged(selection.dragWholeCrop(dragX / metrics.scale, dragY / metrics.scale))
+            },
+        )
+        TextureCropHandle(
+            centerX = cropLeftPx,
+            centerY = cropTopPx,
+            onDrag = { dragX, dragY ->
+                onSelectionChanged(selection.dragTopLeft(dragX / metrics.scale, dragY / metrics.scale))
+            },
+        )
+        TextureCropHandle(
+            centerX = cropLeftPx + cropSizePx,
+            centerY = cropTopPx + cropSizePx,
+            onDrag = { dragX, dragY ->
+                onSelectionChanged(selection.dragBottomRight(dragX / metrics.scale, dragY / metrics.scale))
+            },
+        )
+    }
+}
+
+@Composable
+private fun TextureCropMoveRegion(
+    leftPx: Int,
+    topPx: Int,
+    sizePx: Int,
+    onDrag: (Float, Float) -> Unit,
+) {
+    var isDragging by remember { mutableStateOf(false) }
+    Box(
+        modifier =
+            Modifier
+                .offset { IntOffset(leftPx, topPx) }
+                .size(with(LocalDensity.current) { sizePx.toDp() })
+                .spatialHoverEffect {
+                    val isActive = it.isActive
+                    animation(tween(durationMillis = 120)) {
+                        scale(if (isActive || isDragging) 1.01f else 1f)
+                    }
+                    alpha(1f)
+                }
+                .pointerInput(leftPx, topPx, sizePx) {
+                    awaitPointerEventScope {
+                        while (true) {
+                            val event = awaitPointerEvent(PointerEventPass.Initial)
+                            val change = event.changes.firstOrNull() ?: continue
+                            val pressed = event.changes.any { it.pressed }
+                            isDragging = pressed
+                            if (pressed) {
+                                val delta = change.position - change.previousPosition
+                                if (delta != Offset.Zero) {
+                                    onDrag(delta.x, delta.y)
+                                }
+                                event.changes.forEach { pointerChange ->
+                                    if (pointerChange.pressed) {
+                                        pointerChange.consume()
+                                    }
+                                }
+                            } else {
+                                isDragging = false
+                            }
+                        }
+                    }
+                },
+    )
+}
+
+@Composable
+private fun TextureCropHandle(
+    centerX: Int,
+    centerY: Int,
+    onDrag: (Float, Float) -> Unit,
+) {
+    val hitSizePx = with(LocalDensity.current) { TEXTURE_CROP_HANDLE_HIT_SIZE_DP.roundToPx() }
+    var isDragging by remember { mutableStateOf(false) }
+    Box(
+        modifier =
+            Modifier
+                .offset {
+                    IntOffset(
+                        x = centerX - hitSizePx / 2,
+                        y = centerY - hitSizePx / 2,
+                    )
+                }
+                .size(TEXTURE_CROP_HANDLE_HIT_SIZE_DP)
+                .spatialHoverEffect {
+                    val isActive = it.isActive
+                    animation(tween(durationMillis = 140)) {
+                        scale(if (isActive || isDragging) TEXTURE_CROP_HANDLE_HOVER_SCALE else 1f)
+                    }
+                    alpha(1f)
+                }
+                .pointerInput(centerX, centerY) {
+                    awaitPointerEventScope {
+                        while (true) {
+                            val event = awaitPointerEvent(PointerEventPass.Initial)
+                            val change = event.changes.firstOrNull() ?: continue
+                            val pressed = event.changes.any { it.pressed }
+                            isDragging = pressed
+                            if (pressed) {
+                                val delta = change.position - change.previousPosition
+                                if (delta != Offset.Zero) {
+                                    onDrag(delta.x, delta.y)
+                                }
+                                event.changes.forEach { pointerChange ->
+                                    if (pointerChange.pressed) {
+                                        pointerChange.consume()
+                                    }
+                                }
+                            } else {
+                                isDragging = false
+                            }
+                        }
+                    }
+                },
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(
+            modifier =
+                Modifier
+                    .size(TEXTURE_CROP_HANDLE_SIZE_DP)
+                    .background(Color.White, CircleShape)
+                    .border(2.dp, Color.Black.copy(alpha = 0.24f), CircleShape),
+        )
+    }
+}
+
+private data class TexturePreviewMetrics(
+    val imageLeftPx: Float,
+    val imageTopPx: Float,
+    val imageWidthPx: Float,
+    val imageHeightPx: Float,
+    val scale: Float,
+) {
+    companion object {
+        fun fromBitmap(
+            bitmap: Bitmap,
+            previewSizePx: Float,
+        ): TexturePreviewMetrics {
+            val width = bitmap.width.toFloat().coerceAtLeast(1f)
+            val height = bitmap.height.toFloat().coerceAtLeast(1f)
+            val scale = minOf(previewSizePx / width, previewSizePx / height)
+            val imageWidth = width * scale
+            val imageHeight = height * scale
+            return TexturePreviewMetrics(
+                imageLeftPx = (previewSizePx - imageWidth) * 0.5f,
+                imageTopPx = (previewSizePx - imageHeight) * 0.5f,
+                imageWidthPx = imageWidth,
+                imageHeightPx = imageHeight,
+                scale = scale,
+            )
+        }
+    }
+}
+
+private fun calculateTexturePreviewMetrics(
+    previewSize: Size,
+    bitmap: Bitmap,
+): TexturePreviewMetrics {
+    val side = minOf(previewSize.width, previewSize.height)
+    return TexturePreviewMetrics.fromBitmap(bitmap, side)
+}
+
+private fun TextureCropSelection.dragTopLeft(
+    deltaX: Float,
+    deltaY: Float,
+): TextureCropSelection {
+    val current = squareCropRect()
+    val anchorRight = current.left + current.size
+    val anchorBottom = current.top + current.size
+    val candidateLeft = current.left + deltaX.roundToInt()
+    val candidateTop = current.top + deltaY.roundToInt()
+    val maxSize = minOf(anchorRight, anchorBottom)
+    val newSize =
+        minOf(anchorRight - candidateLeft, anchorBottom - candidateTop)
+            .coerceIn(sourceBitmap.minCropSizePx(), maxSize.coerceAtLeast(sourceBitmap.minCropSizePx()))
+    return withCropRect(
+        left = anchorRight - newSize,
+        top = anchorBottom - newSize,
+        size = newSize,
+    )
+}
+
+private fun TextureCropSelection.dragBottomRight(
+    deltaX: Float,
+    deltaY: Float,
+): TextureCropSelection {
+    val current = squareCropRect()
+    val candidateSize =
+        current.size + minOf(deltaX.roundToInt(), deltaY.roundToInt())
+    val maxSize = minOf(sourceBitmap.width - current.left, sourceBitmap.height - current.top)
+    return withCropRect(
+        left = current.left,
+        top = current.top,
+        size = candidateSize.coerceIn(sourceBitmap.minCropSizePx(), maxSize.coerceAtLeast(sourceBitmap.minCropSizePx())),
+    )
+}
+
+private fun TextureCropSelection.dragWholeCrop(
+    deltaX: Float,
+    deltaY: Float,
+): TextureCropSelection {
+    val current = squareCropRect()
+    return withCropRect(
+        left = current.left + deltaX.roundToInt(),
+        top = current.top + deltaY.roundToInt(),
+        size = current.size,
+    )
+}
+
+@Composable
+private fun TextureOverlayState(
+    text: String,
+    actionText: String,
+    onAction: () -> Unit,
+) {
+    Box(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text(text = text, color = Color.White.copy(alpha = 0.82f))
+            Button(onClick = onAction) {
+                Text(text = actionText)
+            }
+        }
+    }
+}
+
+@Composable
+private fun TextureImageCard(
+    item: TextureImageItem,
+    onClick: () -> Unit,
+) {
+    Column(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(18.dp))
+                .background(Color.White.copy(alpha = 0.08f))
+                .clickable(onClick = onClick)
+                .padding(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        if (item.thumbnail != null) {
+            androidx.compose.foundation.Image(
+                bitmap = item.thumbnail,
+                contentDescription = null,
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .size(132.dp),
+                contentScale = ContentScale.Crop,
+            )
+        } else {
+            Box(
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .size(132.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(Color.White.copy(alpha = 0.08f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(text = "图片", color = Color.White.copy(alpha = 0.75f))
+            }
+        }
+        Text(
+            text = item.label,
+            color = Color.White,
+            style = PicoTheme.typography.bodyMedium,
+            maxLines = 1,
+        )
+    }
+}
+
+private data class TextureImageItem(
+    val uri: Uri,
+    val label: String,
+    val thumbnail: androidx.compose.ui.graphics.ImageBitmap?,
+)
+
+private fun textureReadPermission(): String =
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        Manifest.permission.READ_MEDIA_IMAGES
+    } else {
+        Manifest.permission.READ_EXTERNAL_STORAGE
+    }
+
+private fun Context.hasPermission(permission: String): Boolean =
+    ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
+
+private fun queryRecentImages(context: Context): List<TextureImageItem> {
+    val collection =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL)
+        } else {
+            MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+        }
+
+    val projection =
+        arrayOf(
+            MediaStore.Images.Media._ID,
+            MediaStore.Images.Media.DISPLAY_NAME,
+        )
+
+    val items = mutableListOf<TextureImageItem>()
+    context.contentResolver.query(
+        collection,
+        projection,
+        null,
+        null,
+        "${MediaStore.Images.Media.DATE_ADDED} DESC",
+    )?.use { cursor ->
+        val idIndex = cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
+        val nameIndex = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DISPLAY_NAME)
+        while (cursor.moveToNext() && items.size < 80) {
+            val id = cursor.getLong(idIndex)
+            val name = cursor.getString(nameIndex) ?: "未命名图片"
+            val uri = ContentUris.withAppendedId(collection, id)
+            val thumbnail =
+                runCatching {
+                    context.contentResolver.loadThumbnail(uri, AndroidSize(320, 320), null).asImageBitmap()
+                }.getOrNull()
+            items += TextureImageItem(uri = uri, label = name, thumbnail = thumbnail)
+        }
+    }
+    return items
+}
+
+@Composable
 private fun BrushSizeControl(
     radius: Float,
     onRadiusChange: (Float) -> Unit,
@@ -917,8 +1818,11 @@ private class PaintSceneState {
 
 private data class BrushPreviewStyle(
     val color: BrushColorState,
+    val colorMode: BrushColorMode,
+    val textureSelection: TextureCropSelection?,
     val radius: Float,
     val mode: BrushMode,
+    val materialPreset: BrushMaterialPreset,
 )
 
 private class BrushPreview3D(
@@ -981,7 +1885,15 @@ private class BrushPreview3D(
         val meshData = buildTubeMeshDataFromRings(rings, style.radius)
         val resource = MeshResource.createWithMeshModel(meshData.model, meshData.bounds, "${handName}_brush_preview")
         val entity =
-            ModelEntity(resource, createBrushMaterial(style.color.toColor4())).apply {
+            ModelEntity(
+                resource,
+                createBrushMaterial(
+                    color = style.color,
+                    colorMode = style.colorMode,
+                    textureSelection = style.textureSelection,
+                    materialPreset = style.materialPreset,
+                ),
+            ).apply {
                 setName("${handName}BrushPreviewTube")
             }
         previewRoot.addChild(entity)
@@ -991,7 +1903,13 @@ private class BrushPreview3D(
 
     private fun rebuildSphereSteps(style: BrushPreviewStyle) {
         val resource = MeshResource.createSphere(style.radius)
-        val material = createBrushMaterial(style.color.toColor4())
+        val material =
+            createBrushMaterial(
+                color = style.color,
+                colorMode = style.colorMode,
+                textureSelection = style.textureSelection,
+                materialPreset = style.materialPreset,
+            )
         samplePointsForSpherePreview(
             pathPoints = BRUSH_PREVIEW_POINTS,
             spacing = SPHERE_STEP_DISTANCE_M,
@@ -1017,7 +1935,15 @@ private class BrushPreview3D(
             ).coerceAtMost(MAX_GROWING_SPHERE_RADIUS_M)
         val resource = MeshResource.createSphere(previewRadius)
         val entity =
-            ModelEntity(resource, createBrushMaterial(style.color.toColor4())).apply {
+            ModelEntity(
+                resource,
+                createBrushMaterial(
+                    color = style.color,
+                    colorMode = style.colorMode,
+                    textureSelection = style.textureSelection,
+                    materialPreset = style.materialPreset,
+                ),
+            ).apply {
                 setName("${handName}BrushPreviewGrowingSphere")
                 components.set(
                     TransformComponent().setPosition(Vector3.ZERO),
@@ -1038,7 +1964,15 @@ private class BrushPreview3D(
         val meshData = buildTubeMeshDataFromRings(rings, style.radius)
         val resource = MeshResource.createWithMeshModel(meshData.model, meshData.bounds, "${handName}_brush_preview_line")
         val entity =
-            ModelEntity(resource, createBrushMaterial(style.color.toColor4())).apply {
+            ModelEntity(
+                resource,
+                createBrushMaterial(
+                    color = style.color,
+                    colorMode = style.colorMode,
+                    textureSelection = style.textureSelection,
+                    materialPreset = style.materialPreset,
+                ),
+            ).apply {
                 setName("${handName}BrushPreviewStraightLine")
             }
         previewRoot.addChild(entity)
@@ -1117,8 +2051,12 @@ private class DynamicBrushHand(
     private var brushConfig =
         BrushConfig(
             color = DEFAULT_RIGHT_BRUSH_COLOR.toColor4(),
+            displayColor = DEFAULT_RIGHT_BRUSH_COLOR,
+            colorMode = BrushColorMode.PureColor,
+            textureSelection = null,
             radius = DEFAULT_BRUSH_RADIUS_M,
             mode = BrushMode.Tube,
+            materialPreset = BrushMaterialPreset.Metal,
         )
 
     private var drawActive = false
@@ -1217,28 +2155,52 @@ private class DynamicBrushHand(
                 BrushMode.Tube ->
                     DynamicTubeStroke(
                         strokeName = strokeName,
-                        material = createBrushMaterial(brushConfig.color),
+                        material =
+                            createBrushMaterial(
+                                color = brushConfig.displayColor,
+                                colorMode = brushConfig.colorMode,
+                                textureSelection = brushConfig.textureSelection,
+                                materialPreset = brushConfig.materialPreset,
+                            ),
                         parent = strokesRoot,
                         radius = brushConfig.radius,
                     )
                 BrushMode.SphereSteps ->
                     SphereStepStroke(
                         strokeName = strokeName,
-                        material = createBrushMaterial(brushConfig.color),
+                        material =
+                            createBrushMaterial(
+                                color = brushConfig.displayColor,
+                                colorMode = brushConfig.colorMode,
+                                textureSelection = brushConfig.textureSelection,
+                                materialPreset = brushConfig.materialPreset,
+                            ),
                         parent = strokesRoot,
                         radius = brushConfig.radius,
                     )
                 BrushMode.GrowingSphere ->
                     GrowingSphereStroke(
                         strokeName = strokeName,
-                        material = createBrushMaterial(brushConfig.color),
+                        material =
+                            createBrushMaterial(
+                                color = brushConfig.displayColor,
+                                colorMode = brushConfig.colorMode,
+                                textureSelection = brushConfig.textureSelection,
+                                materialPreset = brushConfig.materialPreset,
+                            ),
                         parent = strokesRoot,
                         baseRadius = brushConfig.radius,
                     )
                 BrushMode.StraightLine ->
                     StraightLineStroke(
                         strokeName = strokeName,
-                        material = createBrushMaterial(brushConfig.color),
+                        material =
+                            createBrushMaterial(
+                                color = brushConfig.displayColor,
+                                colorMode = brushConfig.colorMode,
+                                textureSelection = brushConfig.textureSelection,
+                                materialPreset = brushConfig.materialPreset,
+                            ),
                         parent = strokesRoot,
                         radius = brushConfig.radius,
                     )
@@ -1266,8 +2228,12 @@ private class DynamicBrushHand(
 
 private data class BrushConfig(
     val color: Color4,
+    val displayColor: BrushColorState,
+    val colorMode: BrushColorMode,
+    val textureSelection: TextureCropSelection?,
     val radius: Float,
     val mode: BrushMode,
+    val materialPreset: BrushMaterialPreset,
 )
 
 private enum class BrushMode {
@@ -1275,6 +2241,18 @@ private enum class BrushMode {
     SphereSteps,
     GrowingSphere,
     StraightLine,
+}
+
+private enum class BrushColorMode {
+    PureColor,
+    Texture,
+}
+
+private enum class BrushMaterialPreset {
+    Metal,
+    Fabric,
+    Plastic,
+    Translucent,
 }
 
 private enum class HandSide {
@@ -1340,6 +2318,17 @@ private class HandPanelState(
         panel.enabled = !collapsed || handPose != null
         applyTransform(panel)
     }
+}
+
+private fun applyFixedPanelTransform(
+    panel: Entity,
+    position: Vector3,
+) {
+    panel.components.set(
+        TransformComponent()
+            .setPosition(position)
+            .setScaleVector(Vector3(CONTROL_PANEL_SCALE)),
+    )
 }
 
 private class HandDrawInputState {
@@ -1448,6 +2437,64 @@ private data class BrushColorState(
             )
         }
     }
+}
+
+private data class TextureCropSelection(
+    val sourceBitmap: Bitmap,
+    val cropLeftPx: Int,
+    val cropTopPx: Int,
+    val cropSizePx: Int,
+) {
+    companion object
+}
+
+private data class SquareCropRect(
+    val left: Int,
+    val top: Int,
+    val size: Int,
+)
+
+private fun TextureCropSelection.squareCropRect(): SquareCropRect {
+    val minCropSize = sourceBitmap.minCropSizePx()
+    val maxCropSize = minOf(sourceBitmap.width, sourceBitmap.height).coerceAtLeast(minCropSize)
+    val cropSize = cropSizePx.coerceIn(minCropSize, maxCropSize)
+    val maxLeft = (sourceBitmap.width - cropSize).coerceAtLeast(0)
+    val maxTop = (sourceBitmap.height - cropSize).coerceAtLeast(0)
+    return SquareCropRect(
+        left = cropLeftPx.coerceIn(0, maxLeft),
+        top = cropTopPx.coerceIn(0, maxTop),
+        size = cropSize,
+    )
+}
+
+private fun TextureCropSelection.withCropRect(
+    left: Int,
+    top: Int,
+    size: Int,
+): TextureCropSelection {
+    val minCropSize = sourceBitmap.minCropSizePx()
+    val maxCropSize = minOf(sourceBitmap.width, sourceBitmap.height).coerceAtLeast(minCropSize)
+    val clampedSize = size.coerceIn(minCropSize, maxCropSize)
+    val maxLeft = (sourceBitmap.width - clampedSize).coerceAtLeast(0)
+    val maxTop = (sourceBitmap.height - clampedSize).coerceAtLeast(0)
+    return copy(
+        cropLeftPx = left.coerceIn(0, maxLeft),
+        cropTopPx = top.coerceIn(0, maxTop),
+        cropSizePx = clampedSize,
+    )
+}
+
+private fun Bitmap.minCropSizePx(): Int =
+    (minOf(width, height) * MIN_TEXTURE_CROP_SIZE_RATIO).roundToInt().coerceAtLeast(MIN_TEXTURE_CROP_SIZE_PX)
+
+private fun TextureCropSelection.Companion.createDefault(sourceBitmap: Bitmap): TextureCropSelection {
+    val size = minOf(sourceBitmap.width, sourceBitmap.height).coerceAtLeast(sourceBitmap.minCropSizePx())
+    return TextureCropSelection(
+        sourceBitmap = sourceBitmap,
+        cropLeftPx = (sourceBitmap.width - size) / 2,
+        cropTopPx = (sourceBitmap.height - size) / 2,
+        cropSizePx = size,
+    )
 }
 
 private interface BrushStroke {
@@ -2529,13 +3576,220 @@ private fun createSphereEntity(
     }
 }
 
-private fun createBrushMaterial(color: Color4): PhysicallyBasedMaterial =
-    PhysicallyBasedMaterial.create(BlendingMode.OPAQUE).apply {
-        setBaseColor(color)
-        setRoughness(0.28f)
-        setMetallic(0.02f)
-        setAmbientOcclusion(1f)
+private fun createBrushMaterial(
+    color: BrushColorState,
+    colorMode: BrushColorMode,
+    textureSelection: TextureCropSelection?,
+    materialPreset: BrushMaterialPreset,
+): PhysicallyBasedMaterial {
+    val material =
+        PhysicallyBasedMaterial.create(
+            if (materialPreset == BrushMaterialPreset.Translucent) BlendingMode.TRANSPARENT else BlendingMode.OPAQUE,
+        )
+    val baseColor =
+        when (materialPreset) {
+            BrushMaterialPreset.Metal -> mixColors(color.uiColor, Color(0xFFB8BDC7), 0.18f)
+            BrushMaterialPreset.Fabric -> mixColors(color.uiColor, Color(0xFF6C7078), 0.24f)
+            BrushMaterialPreset.Plastic -> color.uiColor
+            BrushMaterialPreset.Translucent -> color.uiColor.copy(alpha = 0.4f)
+        }
+    val textureBitmap =
+        if (colorMode == BrushColorMode.Texture) {
+            textureSelection?.toTextureBitmap()
+        } else {
+            null
+        }
+    if (textureBitmap != null) {
+        material.setBaseColor(Color.White.copy(alpha = baseColor.alpha).toLinearColor4())
+        runCatching { TextureResource.create(textureBitmap) }
+            .onSuccess { material.setBaseColorTexture(it) }
+            .onFailure {
+                material.setBaseColor(baseColor.toLinearColor4())
+            }
+    } else {
+        material.setBaseColor(baseColor.toLinearColor4())
     }
+    when (materialPreset) {
+        BrushMaterialPreset.Metal -> {
+            material.setMetallic(0.92f)
+            material.setRoughness(0.18f)
+        }
+        BrushMaterialPreset.Fabric -> {
+            material.setMetallic(0f)
+            material.setRoughness(0.92f)
+        }
+        BrushMaterialPreset.Plastic -> {
+            material.setMetallic(0.04f)
+            material.setRoughness(0.34f)
+        }
+        BrushMaterialPreset.Translucent -> {
+            material.setMetallic(0f)
+            material.setRoughness(0.08f)
+        }
+    }
+    material.setAmbientOcclusion(1f)
+    return material
+}
+
+private fun TextureCropSelection.toTextureBitmap(): Bitmap? {
+    val cropRect = squareCropRect()
+    val cropped =
+        Bitmap.createBitmap(
+            sourceBitmap,
+            cropRect.left,
+            cropRect.top,
+            cropRect.size,
+            cropRect.size,
+        )
+    if (cropRect.size == TEXTURE_OUTPUT_SIZE_PX) {
+        return cropped
+    }
+    val scaled = Bitmap.createScaledBitmap(cropped, TEXTURE_OUTPUT_SIZE_PX, TEXTURE_OUTPUT_SIZE_PX, true)
+    if (scaled !== cropped) {
+        cropped.recycle()
+    }
+    return scaled
+}
+
+private fun loadTextureBitmap(
+    context: android.content.Context,
+    uri: Uri,
+): Bitmap? =
+    runCatching {
+        val source = ImageDecoder.createSource(context.contentResolver, uri)
+        ImageDecoder.decodeBitmap(source) { decoder, info, _ ->
+            decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+            val maxDimension = maxOf(info.size.width, info.size.height)
+            if (maxDimension > MAX_TEXTURE_IMPORT_EDGE_PX) {
+                val scale = MAX_TEXTURE_IMPORT_EDGE_PX.toFloat() / maxDimension.toFloat()
+                decoder.setTargetSize(
+                    (info.size.width * scale).roundToInt().coerceAtLeast(1),
+                    (info.size.height * scale).roundToInt().coerceAtLeast(1),
+                )
+            }
+        }
+    }.getOrNull()
+
+private fun mixColors(
+    a: Color,
+    b: Color,
+    t: Float,
+): Color {
+    val clampedT = t.coerceIn(0f, 1f)
+    return Color(
+        red = lerp(a.red, b.red, clampedT),
+        green = lerp(a.green, b.green, clampedT),
+        blue = lerp(a.blue, b.blue, clampedT),
+        alpha = lerp(a.alpha, b.alpha, clampedT),
+    )
+}
+
+private fun Color.toLinearColor4(): Color4 {
+    val linearColor = convert(ColorSpaces.LinearSrgb)
+    return Color4(linearColor.red, linearColor.green, linearColor.blue, linearColor.alpha)
+}
+
+private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawMaterialSphere(
+    preset: BrushMaterialPreset,
+    previewColor: Color,
+    selected: Boolean,
+) {
+    val center = Offset(size.width * 0.5f, size.height * 0.5f)
+    val radius = size.minDimension * 0.40f
+    val highlightCenter = Offset(size.width * 0.34f, size.height * 0.28f)
+    val shadowCenter = Offset(size.width * 0.66f, size.height * 0.72f)
+    val baseTint =
+        when (preset) {
+            BrushMaterialPreset.Metal -> mixColors(previewColor, Color(0xFFB8BDC7), 0.18f)
+            BrushMaterialPreset.Fabric -> mixColors(previewColor, Color(0xFF6C7078), 0.24f)
+            BrushMaterialPreset.Plastic -> previewColor.copy(alpha = 1f)
+            BrushMaterialPreset.Translucent -> previewColor.copy(alpha = 0.55f)
+        }
+
+    drawCircle(
+        brush =
+            Brush.radialGradient(
+                colors =
+                    when (preset) {
+                        BrushMaterialPreset.Metal ->
+                            listOf(
+                                Color.White.copy(alpha = 0.95f),
+                                baseTint,
+                                Color(0xFF5A606C),
+                            )
+                        BrushMaterialPreset.Fabric ->
+                            listOf(
+                                baseTint.copy(alpha = 0.95f),
+                                baseTint,
+                                baseTint.copy(alpha = 0.82f),
+                            )
+                        BrushMaterialPreset.Plastic ->
+                            listOf(
+                                Color.White.copy(alpha = 0.85f),
+                                baseTint,
+                                baseTint.copy(alpha = 0.88f),
+                            )
+                        BrushMaterialPreset.Translucent ->
+                            listOf(
+                                Color.White.copy(alpha = 0.65f),
+                                baseTint,
+                                baseTint.copy(alpha = 0.22f),
+                            )
+                    },
+                center = highlightCenter,
+                radius = size.minDimension * 0.78f,
+            ),
+        radius = radius,
+        center = center,
+    )
+    if (preset == BrushMaterialPreset.Fabric) {
+        drawCircle(
+            brush =
+                Brush.radialGradient(
+                    colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.12f)),
+                    center = shadowCenter,
+                    radius = size.minDimension * 0.65f,
+                ),
+            radius = radius,
+            center = center,
+        )
+    } else {
+        drawCircle(
+            brush =
+                Brush.radialGradient(
+                    colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.18f)),
+                    center = shadowCenter,
+                    radius = size.minDimension * 0.7f,
+                ),
+            radius = radius,
+            center = center,
+        )
+    }
+    drawCircle(
+        color =
+            when (preset) {
+                BrushMaterialPreset.Metal -> Color.White.copy(alpha = 0.55f)
+                BrushMaterialPreset.Fabric -> Color.White.copy(alpha = 0.14f)
+                BrushMaterialPreset.Plastic -> Color.White.copy(alpha = 0.48f)
+                BrushMaterialPreset.Translucent -> Color.White.copy(alpha = 0.34f)
+            },
+        radius = radius * 0.28f,
+        center = highlightCenter,
+    )
+    if (preset == BrushMaterialPreset.Translucent) {
+        drawCircle(
+            color = Color.White.copy(alpha = 0.12f),
+            radius = radius * 0.68f,
+            center = center,
+        )
+    }
+    drawCircle(
+        color = if (selected) Color.White.copy(alpha = 0.72f) else Color.White.copy(alpha = 0.22f),
+        radius = radius,
+        center = center,
+        style = androidx.compose.ui.graphics.drawscope.Stroke(width = if (selected) 3f else 2f),
+    )
+}
 
 private fun resolveHandSide(
     event: SpatialPointerInfo,
@@ -2675,10 +3929,14 @@ private const val END_CAP_SAMPLE_COUNT = 5
 private const val LONG_PINCH_ACTIVATION_MS = 450L
 private const val LEFT_CONTROL_PANEL_ATTACHMENT_ID = "left_brush_control_panel"
 private const val RIGHT_CONTROL_PANEL_ATTACHMENT_ID = "right_brush_control_panel"
+private const val TEXTURE_PICKER_ATTACHMENT_ID = "texture_picker_panel"
 private val LEFT_CONTROL_PANEL_POSITION = Vector3(-0.38f, 1.12f, -0.58f)
 private val RIGHT_CONTROL_PANEL_POSITION = Vector3(0.38f, 1.12f, -0.58f)
+private val TEXTURE_PICKER_PANEL_POSITION = Vector3(0f, 1.12f, -0.50f)
 private const val CONTROL_PANEL_SCALE = 1.0f
 private val CONTROL_PANEL_WIDTH_DP = 380.dp
+private val TEXTURE_PICKER_PANEL_WIDTH_DP = 440.dp
+private val TEXTURE_PICKER_PANEL_HEIGHT_DP = 560.dp
 private val COLLAPSED_PANEL_SIZE_DP = 72.dp
 private const val COLLAPSED_PANEL_WORLD_SCALE = 0.32f
 private const val PANEL_TRANSFORM_LERP = 0.22f
@@ -2697,7 +3955,7 @@ private const val BRUSH_PREVIEW_Z_AMPLITUDE_M = 0.014f
 private const val BRUSH_PREVIEW_LINE_HALF_LENGTH_M = 0.09f
 private val DEFAULT_LEFT_BRUSH_COLOR = BrushColorState.fromUiColor(Color(0xFF4E8CFF))
 private val DEFAULT_RIGHT_BRUSH_COLOR = BrushColorState.fromUiColor(Color(0xFFFF7A59))
-private val BRUSH_PREVIEW_LOCAL_POSITION = Vector3(-0.03f, 0.02f, 0.015f)
+private val BRUSH_PREVIEW_LOCAL_POSITION = Vector3(-0.03f, 0.07f, 0.015f)
 private val BRUSH_PREVIEW_POINTS =
     List(BRUSH_PREVIEW_CONTROL_POINT_COUNT) { index ->
         val t = index.toFloat() / (BRUSH_PREVIEW_CONTROL_POINT_COUNT - 1).toFloat()
@@ -2726,6 +3984,11 @@ private val COLOR_TRACK_WIDTH_DP = 236.dp
 private val COLOR_TRACK_LABEL_WIDTH_DP = 40.dp
 private val COLOR_TRACK_VALUE_WIDTH_DP = 44.dp
 private val BRUSH_SIZE_TRACK_WIDTH_DP = 212.dp
+private val MATERIAL_SWATCH_SIZE_DP = 44.dp
+private val TEXTURE_CROP_PREVIEW_SIZE_DP = 132.dp
+private val TEXTURE_CROP_EDITOR_PREVIEW_SIZE_DP = 320.dp
+private val TEXTURE_CROP_HANDLE_SIZE_DP = 28.dp
+private val TEXTURE_CROP_HANDLE_HIT_SIZE_DP = 56.dp
 private val BRUSH_PREVIEW_PANEL_CLEARANCE_DP = 72.dp
 private val COLOR_TRACK_TOUCH_HEIGHT_DP = 34.dp
 private val COLOR_TRACK_HEIGHT_DP = 14.dp
@@ -2743,4 +4006,22 @@ private const val TRUE_COLOR_WHEEL_MARKER_HOVER_RING_PX = 6f
 private const val UI_POINTER_DRAW_BLOCK_HOLD_MS = 180L
 private const val UV_REPEAT_DISTANCE_M = 0.03f
 private const val EPSILON_M = 0.0001f
+private const val TEXTURE_OUTPUT_SIZE_PX = 512
+private const val MAX_TEXTURE_IMPORT_EDGE_PX = 2048
+private const val MIN_TEXTURE_CROP_SIZE_PX = 192
+private const val MIN_TEXTURE_CROP_SIZE_RATIO = 0.22f
+private const val TEXTURE_CROP_HANDLE_HOVER_SCALE = 1.45f
 private const val TAU_F = (PI * 2.0).toFloat()
+private val TEXTURE_CROP_TRACK_COLORS =
+    listOf(
+        Color(0xFF3E4656),
+        Color(0xFF8D98AD),
+        Color(0xFFE3E7F0),
+    )
+private val BRUSH_MATERIAL_PRESETS =
+    listOf(
+        BrushMaterialPreset.Metal,
+        BrushMaterialPreset.Fabric,
+        BrushMaterialPreset.Plastic,
+        BrushMaterialPreset.Translucent,
+    )
