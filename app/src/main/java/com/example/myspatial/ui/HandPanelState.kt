@@ -5,9 +5,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.pico.spatial.core.ecs.Entity
 import com.pico.spatial.core.ecs.TransformComponent
+import com.pico.spatial.core.math.Quat
 import com.pico.spatial.core.math.Vector3
 import com.pico.spatial.tracking.hand.HandJoint
 import com.pico.spatial.tracking.hand.HandPose
+import kotlin.math.atan2
 
 internal class HandPanelState(
     private val handSide: HandSide,
@@ -18,17 +20,28 @@ internal class HandPanelState(
 
     private var currentPosition = initialExpandedPosition
     private var expandedPosition = initialExpandedPosition
+    private var currentRotation = Quat(Vector3.UP, 0f)
+    private var expandedRotation = Quat(Vector3.UP, 0f)
     private var currentScale = CONTROL_PANEL_SCALE
     private var expandGestureLatched = false
+    private var initializedFacingHead = false
 
     fun collapse() {
         collapsed = true
+    }
+
+    fun initializeFacingHead(headWorldPosition: Vector3?) {
+        if (initializedFacingHead || headWorldPosition == null) return
+        expandedRotation = faceHeadYawQuaternion(expandedPosition, headWorldPosition)
+        currentRotation = expandedRotation
+        initializedFacingHead = true
     }
 
     fun applyTransform(panel: Entity) {
         panel.components.set(
             TransformComponent()
                 .setPosition(currentPosition)
+                .setQuaternion(currentRotation)
                 .setScaleVector(Vector3(currentScale)),
         )
     }
@@ -36,16 +49,21 @@ internal class HandPanelState(
     fun update(
         panel: Entity?,
         handPose: HandPose?,
+        headWorldPosition: Vector3?,
         worldToScene: (Vector3) -> Vector3,
     ) {
         panel ?: return
+        initializeFacingHead(headWorldPosition)
 
         val toggleGestureActive =
             handPose?.thumbLittleDistance()?.let { it <= PANEL_EXPAND_GESTURE_DISTANCE_M } == true
         if (toggleGestureActive && !expandGestureLatched) {
             if (collapsed) {
                 handPose?.let { expandedHandPose ->
-                    expandedPosition = worldToScene(expandedHandPose.expandedPanelWorldPosition())
+                    val expandedWorldPosition = expandedHandPose.expandedPanelWorldPosition()
+                    expandedPosition = worldToScene(expandedWorldPosition)
+                    expandedRotation = faceHeadYawQuaternion(expandedWorldPosition, headWorldPosition)
+                    currentRotation = expandedRotation
                     collapsed = false
                 }
             } else {
@@ -62,6 +80,7 @@ internal class HandPanelState(
         val targetScale = if (collapsed) COLLAPSED_PANEL_WORLD_SCALE else CONTROL_PANEL_SCALE
 
         currentPosition = Vector3.lerp(currentPosition, targetPosition, PANEL_TRANSFORM_LERP)
+        currentRotation = expandedRotation
         currentScale = lerp(currentScale, targetScale, PANEL_TRANSFORM_LERP)
 
         panel.enabled = !collapsed || handPose != null
@@ -116,3 +135,16 @@ private fun lerp(
     end: Float,
     fraction: Float,
 ): Float = start + (end - start) * fraction.coerceIn(0f, 1f)
+
+private fun faceHeadYawQuaternion(
+    panelWorldPosition: Vector3,
+    headWorldPosition: Vector3?,
+): Quat {
+    val lookDirection =
+        headWorldPosition?.let { head ->
+            val horizontal = Vector3(head.x - panelWorldPosition.x, 0f, head.z - panelWorldPosition.z)
+            safeNormalizeOrFallback(horizontal, Vector3(0f, 0f, 1f))
+        } ?: Vector3(0f, 0f, 1f)
+    val yawRadians = atan2(lookDirection.x, lookDirection.z)
+    return Quat(Vector3.UP, yawRadians)
+}

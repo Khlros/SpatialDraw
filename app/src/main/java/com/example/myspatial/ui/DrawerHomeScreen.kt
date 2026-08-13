@@ -43,6 +43,7 @@ import com.pico.spatial.tracking.hand.HandJoint
 import com.pico.spatial.tracking.hand.HandPose
 import com.pico.spatial.tracking.hand.HandTrackingData
 import com.pico.spatial.tracking.hand.HandTrackingProvider
+import com.pico.spatial.tracking.hmd.HMDTrackingProvider
 import com.pico.spatial.ui.foundation.content.SpatialView
 import com.pico.spatial.ui.foundation.gesture.SpatialPointerInfo
 import com.pico.spatial.ui.foundation.gesture.data.InteractionKind
@@ -59,6 +60,7 @@ import kotlin.math.sqrt
 fun DrawerHomeScreen(modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val handTrackingProvider = remember { HandTrackingProvider() }
+    val hmdTrackingProvider = remember { HMDTrackingProvider() }
     val handTrackingData by
         handTrackingProvider.dataFlow.collectAsState(initial = HandTrackingData(null, null, 0L))
     val latestHandTrackingData = rememberUpdatedState(handTrackingData)
@@ -163,9 +165,13 @@ fun DrawerHomeScreen(modifier: Modifier = Modifier) {
     )
     paintScene.setPanelInteractionActive(leftPanelInteracting || rightPanelInteracting || texturePickerTargetHand != null)
 
-    DisposableEffect(handTrackingProvider) {
+    DisposableEffect(handTrackingProvider, hmdTrackingProvider) {
         handTrackingProvider.start()
-        onDispose { handTrackingProvider.stop() }
+        hmdTrackingProvider.start()
+        onDispose {
+            handTrackingProvider.stop()
+            hmdTrackingProvider.stop()
+        }
     }
 
     Box(
@@ -190,10 +196,12 @@ fun DrawerHomeScreen(modifier: Modifier = Modifier) {
             initial = { content, attachments ->
                 paintScene.attach(content)
                 attachments.entity(LEFT_CONTROL_PANEL_ATTACHMENT_ID)?.let { panel ->
+                    leftPanelState.initializeFacingHead(hmdTrackingProvider.latestData.hmdPose.position)
                     leftPanelState.applyTransform(panel)
                     content.addEntity(panel)
                 }
                 attachments.entity(RIGHT_CONTROL_PANEL_ATTACHMENT_ID)?.let { panel ->
+                    rightPanelState.initializeFacingHead(hmdTrackingProvider.latestData.hmdPose.position)
                     rightPanelState.applyTransform(panel)
                     content.addEntity(panel)
                 }
@@ -280,11 +288,13 @@ fun DrawerHomeScreen(modifier: Modifier = Modifier) {
                 leftPanelState.update(
                     panel = attachments.entity(LEFT_CONTROL_PANEL_ATTACHMENT_ID),
                     handPose = handTrackingData.left,
+                    headWorldPosition = hmdTrackingProvider.latestData.hmdPose.position,
                     worldToScene = { point -> paintScene.worldToSceneLocal(point) },
                 )
                 rightPanelState.update(
                     panel = attachments.entity(RIGHT_CONTROL_PANEL_ATTACHMENT_ID),
                     handPose = handTrackingData.right,
+                    headWorldPosition = hmdTrackingProvider.latestData.hmdPose.position,
                     worldToScene = { point -> paintScene.worldToSceneLocal(point) },
                 )
                 attachments.entity(TEXTURE_PICKER_ATTACHMENT_ID)?.let { panel ->
