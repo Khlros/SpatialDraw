@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
@@ -37,6 +38,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
@@ -110,12 +112,15 @@ private fun ExpandedHandBrushPanel(
     onAction: (HandBrushPanelAction) -> Unit,
 ) {
     val scrollState = rememberScrollState()
+    val panelShape = RoundedCornerShape(28.dp)
     Column(
         modifier =
             Modifier
                 .width(CONTROL_PANEL_WIDTH_DP)
                 .fillMaxHeight()
-                .background(Color(0xCC1B1D24))
+                .clip(panelShape)
+                .background(Color(0xCC1B1D24), panelShape)
+                .border(1.5.dp, Color.White.copy(alpha = 0.12f), panelShape)
                 .pointerInput(Unit) {
                     awaitEachGesture {
                         val down =
@@ -499,10 +504,38 @@ private fun BrushOptionButton(
     selected: Boolean,
     onClick: () -> Unit,
 ) {
-    Button(onClick = onClick) {
+    val shape = RoundedCornerShape(14.dp)
+    val selectedBackground = Color(0xFF4E8CFF).copy(alpha = 0.88f)
+    val idleBackground = Color.White.copy(alpha = 0.08f)
+    val selectedBorder = Color(0xFF9BC0FF)
+    val idleBorder = Color.White.copy(alpha = 0.16f)
+    val selectedText = Color.White
+    val idleText = Color.White.copy(alpha = 0.80f)
+
+    Box(
+        modifier =
+            Modifier
+                .spatialHoverEffect {
+                    val isActive = it.isActive
+                    animation(tween(durationMillis = 160)) {
+                        scale(if (isActive) 1.04f else 1f)
+                    }
+                    alpha(1f)
+                }
+                .background(if (selected) selectedBackground else idleBackground, shape)
+                .border(
+                    width = if (selected) 2.dp else 1.dp,
+                    color = if (selected) selectedBorder else idleBorder,
+                    shape = shape,
+                )
+                .clickable(onClick = onClick)
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+        contentAlignment = Alignment.Center,
+    ) {
         Text(
-            text = if (selected) "[$label]" else label,
+            text = label,
             style = PicoTheme.typography.bodyMedium,
+            color = if (selected) selectedText else idleText,
         )
     }
 }

@@ -192,7 +192,7 @@ internal class PaintSceneState {
         onUndo: () -> Unit,
     ): Boolean {
         val undoGestureActive =
-            handPose?.thumbMiddleDistance()?.let { it <= UNDO_GESTURE_DISTANCE_M } == true
+            handPose?.thumbRingDistance()?.let { it <= UNDO_GESTURE_DISTANCE_M } == true
         if (undoGestureActive && !currentLatch && !inputState.shouldDraw) {
             onUndo()
         }
@@ -1094,7 +1094,7 @@ private class GrowingSphereStroke(
     private var sphereEntity: ModelEntity? = null
     private var centerPoint: Vector3? = null
     private var drawStartRealtimeMs = 0L
-    private var currentRadius = baseRadius
+    private var currentRadius = initialGrowingSphereRadius(baseRadius)
 
     override val lastPoint: Vector3?
         get() = centerPoint
@@ -1116,7 +1116,7 @@ private class GrowingSphereStroke(
         if (centerPoint == null) {
             centerPoint = point
             drawStartRealtimeMs = SystemClock.elapsedRealtime()
-            currentRadius = baseRadius
+            currentRadius = initialGrowingSphereRadius(baseRadius)
             val entity =
                 ModelEntity(sphereMesh, material).apply {
                     setName(strokeName)
@@ -1140,7 +1140,7 @@ private class GrowingSphereStroke(
         val center = centerPoint ?: return
         val elapsedSeconds = (SystemClock.elapsedRealtime() - drawStartRealtimeMs).coerceAtLeast(0L) / 1000f
         currentRadius =
-            (baseRadius + elapsedSeconds * GROWING_SPHERE_GROWTH_SPEED_M_PER_S)
+            (initialGrowingSphereRadius(baseRadius) + elapsedSeconds * GROWING_SPHERE_GROWTH_SPEED_M_PER_S)
                 .coerceAtMost(MAX_GROWING_SPHERE_RADIUS_M)
         sphereEntity?.components?.set(
             TransformComponent()
@@ -1757,6 +1757,12 @@ private fun lerpScalar(
     return start + (end - start) * t
 }
 
+private fun initialGrowingSphereRadius(baseRadius: Float): Float {
+    return (baseRadius * GROWING_SPHERE_INITIAL_RADIUS_SCALE)
+        .coerceAtLeast(MIN_BRUSH_RADIUS_M)
+        .coerceAtMost(MAX_GROWING_SPHERE_RADIUS_M)
+}
+
 private fun smoothstep(value: Float): Float {
     val t = value.coerceIn(0f, 1f)
     return t * t * (3f - 2f * t)
@@ -1924,10 +1930,10 @@ private fun HandPose.pinchCenter(): Vector3 {
     return (indexTip.position + thumbTip.position) / 2f
 }
 
-private fun HandPose.thumbMiddleDistance(): Float {
+private fun HandPose.thumbRingDistance(): Float {
     val thumbTip = this[HandJoint.Index.THUMB_TIP]
-    val middleTip = this[HandJoint.Index.MIDDLE_TIP]
-    return Vector3.distance(thumbTip.position, middleTip.position)
+    val ringTip = this[HandJoint.Index.RING_TIP]
+    return Vector3.distance(thumbTip.position, ringTip.position)
 }
 
 private fun HandPose.pinchDistance(): Float {
@@ -1941,7 +1947,8 @@ private fun com.pico.spatial.ui.geometry.Offset3D.toVector3(): Vector3 = Vector3
 private const val PINCH_START_DISTANCE_M = 0.018f
 private const val PINCH_RELEASE_DISTANCE_M = 0.026f
 private const val MAX_GROWING_SPHERE_RADIUS_M = 0.3f
-private const val GROWING_SPHERE_GROWTH_SPEED_M_PER_S = 0.22f
+private const val GROWING_SPHERE_GROWTH_SPEED_M_PER_S = 0.06f
+private const val GROWING_SPHERE_INITIAL_RADIUS_SCALE = 0.55f
 private const val CURSOR_BASE_RADIUS_M = 0.012f
 private const val MIN_POINT_SPACING_M = 0.004f
 private const val TARGET_POINT_SPACING_M = 0.008f
@@ -1968,8 +1975,8 @@ private const val END_CAP_SAMPLE_COUNT = 5
 private const val LONG_PINCH_ACTIVATION_MS = 450L
 private const val UNDO_GESTURE_DISTANCE_M = 0.028f
 private const val BRUSH_PREVIEW_LOCAL_SCALE = 1.0f
-private const val GROWING_SPHERE_PREVIEW_SCALE = 2.6f
-private const val BRUSH_PREVIEW_MIN_GROWING_SPHERE_RADIUS_M = 0.025f
+private const val GROWING_SPHERE_PREVIEW_SCALE = 1.9f
+private const val BRUSH_PREVIEW_MIN_GROWING_SPHERE_RADIUS_M = 0.020f
 private const val BRUSH_PREVIEW_CONTROL_POINT_COUNT = 90
 private const val BRUSH_PREVIEW_HELIX_TURNS = 1.5f
 private const val BRUSH_PREVIEW_HALF_WIDTH_M = 0.058f
