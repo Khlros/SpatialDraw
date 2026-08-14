@@ -54,18 +54,21 @@ internal class HandPanelState(
     ) {
         panel ?: return
         initializeFacingHead(headWorldPosition)
+        if (handPose == null) {
+            expandGestureLatched = false
+            panel.enabled = false
+            return
+        }
 
         val toggleGestureActive =
-            handPose?.thumbLittleDistance()?.let { it <= PANEL_EXPAND_GESTURE_DISTANCE_M } == true
+            handPose.thumbLittleDistance() <= PANEL_EXPAND_GESTURE_DISTANCE_M
         if (toggleGestureActive && !expandGestureLatched) {
             if (collapsed) {
-                handPose?.let { expandedHandPose ->
-                    val expandedWorldPosition = expandedHandPose.expandedPanelWorldPosition()
-                    expandedPosition = worldToScene(expandedWorldPosition)
-                    expandedRotation = faceHeadYawQuaternion(expandedWorldPosition, headWorldPosition)
-                    currentRotation = expandedRotation
-                    collapsed = false
-                }
+                val expandedWorldPosition = handPose.expandedPanelWorldPosition()
+                expandedPosition = worldToScene(expandedWorldPosition)
+                expandedRotation = faceHeadYawQuaternion(expandedWorldPosition, headWorldPosition)
+                currentRotation = expandedRotation
+                collapsed = false
             } else {
                 collapsed = true
             }
@@ -74,7 +77,7 @@ internal class HandPanelState(
 
         val targetPosition =
             when {
-                collapsed && handPose != null -> worldToScene(handPose.collapsedOrbWorldPosition())
+                collapsed -> worldToScene(handPose.collapsedOrbWorldPosition())
                 else -> expandedPosition
             }
         val targetScale = if (collapsed) COLLAPSED_PANEL_WORLD_SCALE else CONTROL_PANEL_SCALE
@@ -83,7 +86,7 @@ internal class HandPanelState(
         currentRotation = expandedRotation
         currentScale = lerp(currentScale, targetScale, PANEL_TRANSFORM_LERP)
 
-        panel.enabled = !collapsed || handPose != null
+        panel.enabled = true
         applyTransform(panel)
     }
 }
@@ -113,8 +116,8 @@ private fun HandPose.panelForwardDirection(): Vector3 {
 }
 
 private fun HandPose.collapsedOrbWorldPosition(): Vector3 {
-    val palm = this[HandJoint.Index.PALM].position
-    return palm + panelForwardDirection() * PANEL_ORB_FORWARD_OFFSET_M
+    val littleTip = this[HandJoint.Index.LITTLE_TIP].position
+    return littleTip + panelForwardDirection() * PANEL_ORB_FORWARD_OFFSET_M + Vector3.UP * PANEL_ORB_VERTICAL_OFFSET_M
 }
 
 private fun HandPose.expandedPanelWorldPosition(): Vector3 {

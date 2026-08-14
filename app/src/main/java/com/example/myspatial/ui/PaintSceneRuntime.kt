@@ -128,8 +128,8 @@ internal class PaintSceneState {
                 onUndo = { rightStroke.undoLastStroke() },
             )
 
-        leftPreview.updateAnchor(panel = leftPanel, collapsed = leftPanelCollapsed)
-        rightPreview.updateAnchor(panel = rightPanel, collapsed = rightPanelCollapsed)
+        leftPreview.updateAnchor(panel = leftPanel, collapsed = leftPanelCollapsed, tracked = handTrackingData.left != null)
+        rightPreview.updateAnchor(panel = rightPanel, collapsed = rightPanelCollapsed, tracked = handTrackingData.right != null)
         leftStroke.update(handTrackingData.left, sceneRoot, leftInput.shouldDraw)
         rightStroke.update(handTrackingData.right, sceneRoot, rightInput.shouldDraw)
     }
@@ -245,6 +245,7 @@ private class BrushPreview3D(
     fun updateAnchor(
         panel: Entity?,
         collapsed: Boolean,
+        tracked: Boolean,
     ) {
         if (panel == null) {
             previewRoot.enabled = false
@@ -255,7 +256,7 @@ private class BrushPreview3D(
             panel.addChild(previewRoot)
             parentPanel = panel
         }
-        previewRoot.enabled = !collapsed
+        previewRoot.enabled = tracked && !collapsed
         previewRoot.components.set(
             TransformComponent()
                 .setPosition(BRUSH_PREVIEW_LOCAL_POSITION)
