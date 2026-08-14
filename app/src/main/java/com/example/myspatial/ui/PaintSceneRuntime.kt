@@ -2207,8 +2207,8 @@ private fun HandPose.pinchDistance(): Float {
 
 private fun com.pico.spatial.ui.geometry.Offset3D.toVector3(): Vector3 = Vector3(x, y, z)
 
-private const val PINCH_START_DISTANCE_M = 0.018f
-private const val PINCH_RELEASE_DISTANCE_M = 0.026f
+private const val PINCH_START_DISTANCE_M = 0.013f
+private const val PINCH_RELEASE_DISTANCE_M = 0.017f
 private const val MAX_GROWING_SPHERE_RADIUS_M = 0.3f
 private const val GROWING_SPHERE_GROWTH_SPEED_M_PER_S = 0.06f
 private const val GROWING_SPHERE_INITIAL_RADIUS_SCALE = 0.55f
