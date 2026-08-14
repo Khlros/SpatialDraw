@@ -15,8 +15,10 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.colorspace.ColorSpaces
@@ -48,6 +50,10 @@ import com.pico.spatial.ui.foundation.content.SpatialView
 import com.pico.spatial.ui.foundation.gesture.SpatialPointerInfo
 import com.pico.spatial.ui.foundation.gesture.data.InteractionKind
 import com.pico.spatial.ui.foundation.gesture.detectSpatialPointerEvent
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlin.math.PI
 import kotlin.math.acos
 import kotlin.math.abs
@@ -61,6 +67,8 @@ fun DrawerHomeScreen(modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val handTrackingProvider = remember { HandTrackingProvider() }
     val hmdTrackingProvider = remember { HMDTrackingProvider() }
+    val projectStorage = remember(context.applicationContext) { DrawingProjectStorage(context.applicationContext) }
+    val coroutineScope = rememberCoroutineScope()
     val handTrackingData by
         handTrackingProvider.dataFlow.collectAsState(initial = HandTrackingData(null, null, 0L))
     val latestHandTrackingData = rememberUpdatedState(handTrackingData)
@@ -84,6 +92,24 @@ fun DrawerHomeScreen(modifier: Modifier = Modifier) {
     var rightSelectedMode by remember { mutableStateOf(BrushMode.Tube) }
     var rightSelectedMaterial by remember { mutableStateOf(BrushMaterialPreset.Metal) }
     var texturePickerTargetHand by remember { mutableStateOf<HandSide?>(null) }
+    var projectBrowserVisible by remember { mutableStateOf(false) }
+    var projectPanelMode by remember { mutableStateOf(ProjectPanelMode.Open) }
+    var currentProjectFile by remember { mutableStateOf<SavedProjectFile?>(null) }
+    var savePathInput by remember { mutableStateOf(projectStorage.buildSuggestedProjectPath()) }
+    var projectNotice by remember { mutableStateOf<ProjectOperationNotice?>(null) }
+    var savedProjects by remember { mutableStateOf(projectStorage.listProjects()) }
+    val effectiveSavePathInput =
+        remember(savePathInput) {
+            savePathInput.ifBlank { projectStorage.buildSuggestedProjectPath() }
+        }
+    val normalizedSavePath =
+        remember(effectiveSavePathInput) {
+            projectStorage.normalizeProjectRelativePathInput(effectiveSavePathInput)
+        }
+    val existingSaveTarget =
+        remember(savedProjects, normalizedSavePath) {
+            savedProjects.firstOrNull { it.relativePath == normalizedSavePath }
+        }
     val leftPanelUiState =
         HandBrushPanelUiState(
             title = "左手画笔",
@@ -163,7 +189,167 @@ fun DrawerHomeScreen(modifier: Modifier = Modifier) {
                 materialPreset = rightSelectedMaterial,
             ),
     )
-    paintScene.setPanelInteractionActive(leftPanelInteracting || rightPanelInteracting || texturePickerTargetHand != null)
+    val refreshProjectFiles = {
+        savedProjects = projectStorage.listProjects()
+    }
+    val startProjectNotice: (ProjectOperationNotice, Long?) -> Unit = { notice, autoDismissMs ->
+        coroutineScope.launch {
+            projectNotice = notice
+            autoDismissMs?.let {
+                delay(it)
+                if (projectNotice == notice) {
+                    projectNotice = null
+                }
+            }
+        }
+    }
+    val openSavePanel = {
+        refreshProjectFiles()
+        projectPanelMode = ProjectPanelMode.Save
+        savePathInput = currentProjectFile?.relativePathWithoutExtension ?: projectStorage.buildSuggestedProjectPath()
+        texturePickerTargetHand = null
+        projectBrowserVisible = true
+    }
+    val openProjectBrowser = {
+        refreshProjectFiles()
+        projectPanelMode = ProjectPanelMode.Open
+        texturePickerTargetHand = null
+        projectBrowserVisible = true
+    }
+    val saveCurrentProject = {
+        val sceneSnapshot = paintScene.exportDrawingSnapshot()
+        val document =
+            DrawingProjectDocument(
+                leftHandState =
+                    snapshotBrushState(
+                        color = leftSelectedColor,
+                        colorMode = leftColorMode,
+                        textureSelection = leftTextureSelection,
+                        opacity = leftOpacity,
+                        radius = leftBrushRadius,
+                        mode = leftSelectedMode,
+                        materialPreset = leftSelectedMaterial,
+                    ),
+                rightHandState =
+                    snapshotBrushState(
+                        color = rightSelectedColor,
+                        colorMode = rightColorMode,
+                        textureSelection = rightTextureSelection,
+                        opacity = rightOpacity,
+                        radius = rightBrushRadius,
+                        mode = rightSelectedMode,
+                        materialPreset = rightSelectedMaterial,
+                    ),
+                leftStrokes = sceneSnapshot.leftStrokes,
+                rightStrokes = sceneSnapshot.rightStrokes,
+            )
+        coroutineScope.launch {
+            projectNotice =
+                ProjectOperationNotice(
+                    title = "正在保存",
+                    detail = normalizedSavePath,
+                    busy = true,
+                )
+            delay(120)
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    projectStorage.saveProject(
+                        document = document,
+                        relativePath = effectiveSavePathInput,
+                        existingFile = existingSaveTarget?.file,
+                    )
+                }
+            }.onSuccess { savedProject ->
+                currentProjectFile = savedProject
+                refreshProjectFiles()
+                projectBrowserVisible = false
+                startProjectNotice(
+                    ProjectOperationNotice(
+                        title = "保存完成",
+                        detail = savedProject.relativePath,
+                        busy = false,
+                    ),
+                    1600L,
+                )
+            }.onFailure {
+                startProjectNotice(
+                    ProjectOperationNotice(
+                        title = "保存失败",
+                        detail = it.message ?: "请检查路径后重试",
+                        busy = false,
+                    ),
+                    2200L,
+                )
+            }
+        }
+    }
+    val loadProjectDocument: (SavedProjectFile) -> Unit = { savedProject ->
+        coroutineScope.launch {
+            projectNotice =
+                ProjectOperationNotice(
+                    title = "正在打开",
+                    detail = savedProject.relativePath,
+                    busy = true,
+                )
+            delay(180)
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    projectStorage.loadProject(savedProject.file)
+                }
+            }.onSuccess { document ->
+                leftSelectedColor = document.leftHandState.selectedColor
+                leftColorMode = document.leftHandState.colorMode
+                leftTextureSelection = document.leftHandState.textureSelection
+                leftOpacity = document.leftHandState.opacity
+                leftBrushRadius = document.leftHandState.radius
+                leftSelectedMode = document.leftHandState.mode
+                leftSelectedMaterial = document.leftHandState.materialPreset
+
+                rightSelectedColor = document.rightHandState.selectedColor
+                rightColorMode = document.rightHandState.colorMode
+                rightTextureSelection = document.rightHandState.textureSelection
+                rightOpacity = document.rightHandState.opacity
+                rightBrushRadius = document.rightHandState.radius
+                rightSelectedMode = document.rightHandState.mode
+                rightSelectedMaterial = document.rightHandState.materialPreset
+
+                paintScene.loadDrawingSnapshot(
+                    DrawingSceneSnapshot(
+                        leftStrokes = document.leftStrokes,
+                        rightStrokes = document.rightStrokes,
+                    ),
+                )
+                currentProjectFile = savedProject
+                savePathInput = savedProject.relativePathWithoutExtension
+                texturePickerTargetHand = null
+                projectBrowserVisible = false
+                leftPanelInteracting = false
+                rightPanelInteracting = false
+                refreshProjectFiles()
+                startProjectNotice(
+                    ProjectOperationNotice(
+                        title = "打开完成",
+                        detail = savedProject.relativePath,
+                        busy = false,
+                    ),
+                    1600L,
+                )
+            }.onFailure {
+                startProjectNotice(
+                    ProjectOperationNotice(
+                        title = "打开失败",
+                        detail = it.message ?: "请稍后重试",
+                        busy = false,
+                    ),
+                    2200L,
+                )
+            }
+        }
+    }
+
+    paintScene.setPanelInteractionActive(
+        leftPanelInteracting || rightPanelInteracting || texturePickerTargetHand != null || projectBrowserVisible,
+    )
 
     DisposableEffect(handTrackingProvider, hmdTrackingProvider) {
         handTrackingProvider.start()
@@ -210,6 +396,11 @@ fun DrawerHomeScreen(modifier: Modifier = Modifier) {
                     panel.enabled = false
                     content.addEntity(panel)
                 }
+                attachments.entity(PROJECT_BROWSER_ATTACHMENT_ID)?.let { panel ->
+                    applyFixedPanelTransform(panel, PROJECT_BROWSER_PANEL_POSITION)
+                    panel.enabled = false
+                    content.addEntity(panel)
+                }
             },
             attachments = {
                 AttachmentPanel(
@@ -227,6 +418,10 @@ fun DrawerHomeScreen(modifier: Modifier = Modifier) {
                                 is HandBrushPanelAction.SetInteractionActive -> leftPanelInteracting = action.active
                                 is HandBrushPanelAction.SetOpacity -> leftOpacity = action.opacity
                                 HandBrushPanelAction.ClearCanvas -> paintScene.clear()
+                                HandBrushPanelAction.SaveProject -> openSavePanel()
+                                HandBrushPanelAction.OpenProjectBrowser -> {
+                                    openProjectBrowser()
+                                }
                                 HandBrushPanelAction.Collapse -> {
                                     leftPanelInteracting = false
                                     leftPanelState.collapse()
@@ -252,6 +447,10 @@ fun DrawerHomeScreen(modifier: Modifier = Modifier) {
                                 is HandBrushPanelAction.SetInteractionActive -> rightPanelInteracting = action.active
                                 is HandBrushPanelAction.SetOpacity -> rightOpacity = action.opacity
                                 HandBrushPanelAction.ClearCanvas -> paintScene.clear()
+                                HandBrushPanelAction.SaveProject -> openSavePanel()
+                                HandBrushPanelAction.OpenProjectBrowser -> {
+                                    openProjectBrowser()
+                                }
                                 HandBrushPanelAction.Collapse -> {
                                     rightPanelInteracting = false
                                     rightPanelState.collapse()
@@ -283,6 +482,23 @@ fun DrawerHomeScreen(modifier: Modifier = Modifier) {
                         },
                     )
                 }
+                AttachmentPanel(
+                    id = PROJECT_BROWSER_ATTACHMENT_ID,
+                ) {
+                    ProjectBrowserAttachmentPanel(
+                        mode = projectPanelMode,
+                        projects = savedProjects,
+                        currentProject = currentProjectFile,
+                        savePathInput = savePathInput,
+                        existingSaveTarget = existingSaveTarget,
+                        onSavePathInputChange = { savePathInput = it },
+                        onSaveProject = { saveCurrentProject() },
+                        onRefresh = refreshProjectFiles,
+                        onOpenProject = loadProjectDocument,
+                        onUseProjectPath = { project -> savePathInput = project.relativePathWithoutExtension },
+                        onDismiss = { projectBrowserVisible = false },
+                    )
+                }
             },
             update = { _, attachments ->
                 leftPanelState.update(
@@ -303,6 +519,12 @@ fun DrawerHomeScreen(modifier: Modifier = Modifier) {
                         applyFixedPanelTransform(panel, TEXTURE_PICKER_PANEL_POSITION)
                     }
                 }
+                attachments.entity(PROJECT_BROWSER_ATTACHMENT_ID)?.let { panel ->
+                    panel.enabled = projectBrowserVisible
+                    if (panel.enabled) {
+                        applyFixedPanelTransform(panel, PROJECT_BROWSER_PANEL_POSITION)
+                    }
+                }
                 paintScene.update(
                     handTrackingData = handTrackingData,
                     allowInstantPinchDrawing = leftPanelState.collapsed && rightPanelState.collapsed,
@@ -313,5 +535,30 @@ fun DrawerHomeScreen(modifier: Modifier = Modifier) {
                 )
             },
         )
+        Box(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = Alignment.Center,
+        ) {
+            ProjectOperationOverlay(notice = projectNotice)
+        }
     }
 }
+
+private fun snapshotBrushState(
+    color: BrushColorState,
+    colorMode: BrushColorMode,
+    textureSelection: TextureCropSelection?,
+    opacity: Float,
+    radius: Float,
+    mode: BrushMode,
+    materialPreset: BrushMaterialPreset,
+): DrawingBrushStateSnapshot =
+    DrawingBrushStateSnapshot(
+        selectedColor = color,
+        colorMode = colorMode,
+        textureSelection = textureSelection,
+        opacity = opacity,
+        radius = radius,
+        mode = mode,
+        materialPreset = materialPreset,
+    )

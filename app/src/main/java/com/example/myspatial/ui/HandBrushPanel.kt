@@ -172,6 +172,20 @@ private fun ExpandedHandBrushPanel(
                 color = Color.White,
             )
 
+            Text(text = "文件", style = PicoTheme.typography.titleMedium, color = Color.White)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                BrushOptionButton(
+                    label = "保存",
+                    selected = false,
+                    onClick = { onAction(HandBrushPanelAction.SaveProject) },
+                )
+                BrushOptionButton(
+                    label = "打开",
+                    selected = false,
+                    onClick = { onAction(HandBrushPanelAction.OpenProjectBrowser) },
+                )
+            }
+
             Text(text = "笔刷", style = PicoTheme.typography.titleMedium, color = Color.White)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 BrushOptionButton(

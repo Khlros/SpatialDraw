@@ -168,6 +168,21 @@ internal class PaintSceneState {
         }
     }
 
+    fun exportDrawingSnapshot(): DrawingSceneSnapshot =
+        DrawingSceneSnapshot(
+            leftStrokes = leftStroke.exportFinishedStrokes(),
+            rightStrokes = rightStroke.exportFinishedStrokes(),
+        )
+
+    fun loadDrawingSnapshot(snapshot: DrawingSceneSnapshot) {
+        leftStroke.restoreFinishedStrokes(snapshot.leftStrokes)
+        rightStroke.restoreFinishedStrokes(snapshot.rightStrokes)
+        leftInput.cancelDrawingForUi()
+        rightInput.cancelDrawingForUi()
+        leftUndoGestureLatched = false
+        rightUndoGestureLatched = false
+    }
+
     fun setPanelInteractionActive(active: Boolean) {
         panelInteractionActive = active
         if (active) {
@@ -538,13 +553,25 @@ private class DynamicBrushHand(
         finishedStrokes.removeLastOrNull()?.dispose()
     }
 
+    fun exportFinishedStrokes(): List<SavedStrokeSnapshot> =
+        finishedStrokes.mapNotNull { it.toSavedSnapshot() }
+
+    fun restoreFinishedStrokes(snapshots: List<SavedStrokeSnapshot>) {
+        clear()
+        snapshots.forEach { snapshot ->
+            restoreStroke(snapshot)?.let { finishedStrokes.add(it) }
+        }
+    }
+
     private fun beginStroke(startPoint: Vector3): BrushStroke {
         val strokeName = "${strokesRoot.getName()}_${strokeIndex++}"
+        val snapshotConfig = brushConfig.toDrawingBrushStateSnapshot()
         val stroke =
             when (brushConfig.mode) {
                 BrushMode.Tube ->
                     DynamicTubeStroke(
                         strokeName = strokeName,
+                        snapshotConfig = snapshotConfig,
                         material =
                             createBrushMaterial(
                                 color = brushConfig.displayColor,
@@ -559,6 +586,7 @@ private class DynamicBrushHand(
                 BrushMode.SphereSteps ->
                     SphereStepStroke(
                         strokeName = strokeName,
+                        snapshotConfig = snapshotConfig,
                         material =
                             createBrushMaterial(
                                 color = brushConfig.displayColor,
@@ -573,6 +601,7 @@ private class DynamicBrushHand(
                 BrushMode.GrowingSphere ->
                     GrowingSphereStroke(
                         strokeName = strokeName,
+                        snapshotConfig = snapshotConfig,
                         material =
                             createBrushMaterial(
                                 color = brushConfig.displayColor,
@@ -587,6 +616,7 @@ private class DynamicBrushHand(
                 BrushMode.StraightLine ->
                     StraightLineStroke(
                         strokeName = strokeName,
+                        snapshotConfig = snapshotConfig,
                         material =
                             createBrushMaterial(
                                 color = brushConfig.displayColor,
@@ -618,6 +648,59 @@ private class DynamicBrushHand(
             stroke.dispose()
         }
     }
+
+    private fun restoreStroke(snapshot: SavedStrokeSnapshot): BrushStroke? {
+        val strokeName = "${strokesRoot.getName()}_${strokeIndex++}"
+        val config = snapshot.brush
+        val material =
+            createBrushMaterial(
+                color = config.selectedColor,
+                colorMode = config.colorMode,
+                textureSelection = config.textureSelection,
+                opacity = config.opacity,
+                materialPreset = config.materialPreset,
+            )
+        return when (config.mode) {
+            BrushMode.Tube ->
+                DynamicTubeStroke.restore(
+                    strokeName = strokeName,
+                    snapshotConfig = config,
+                    material = material,
+                    parent = strokesRoot,
+                    radius = config.radius,
+                    points = snapshot.points,
+                )
+            BrushMode.SphereSteps ->
+                SphereStepStroke.restore(
+                    strokeName = strokeName,
+                    snapshotConfig = config,
+                    material = material,
+                    parent = strokesRoot,
+                    radius = config.radius,
+                    points = snapshot.points,
+                )
+            BrushMode.GrowingSphere ->
+                GrowingSphereStroke.restore(
+                    strokeName = strokeName,
+                    snapshotConfig = config,
+                    material = material,
+                    parent = strokesRoot,
+                    baseRadius = config.radius,
+                    centerPoint = snapshot.points.firstOrNull(),
+                    finalRadius = snapshot.growingSphereRadius,
+                )
+            BrushMode.StraightLine ->
+                StraightLineStroke.restore(
+                    strokeName = strokeName,
+                    snapshotConfig = config,
+                    material = material,
+                    parent = strokesRoot,
+                    radius = config.radius,
+                    startPoint = snapshot.points.getOrNull(0),
+                    endPoint = snapshot.points.getOrNull(1),
+                )
+        }?.takeIf { it.hasRenderableMesh }
+    }
 }
 
 internal data class BrushConfig(
@@ -630,6 +713,17 @@ internal data class BrushConfig(
     val mode: BrushMode,
     val materialPreset: BrushMaterialPreset,
 )
+
+internal fun BrushConfig.toDrawingBrushStateSnapshot(): DrawingBrushStateSnapshot =
+    DrawingBrushStateSnapshot(
+        selectedColor = displayColor,
+        colorMode = colorMode,
+        textureSelection = textureSelection,
+        opacity = opacity,
+        radius = radius,
+        mode = mode,
+        materialPreset = materialPreset,
+    )
 
 private class HandDrawInputState {
     private var activeUiPointerId: PointerId? = null
@@ -723,11 +817,14 @@ private interface BrushStroke {
 
     fun finish()
 
+    fun toSavedSnapshot(): SavedStrokeSnapshot?
+
     fun dispose()
 }
 
 private class DynamicTubeStroke(
     private val strokeName: String,
+    private val snapshotConfig: DrawingBrushStateSnapshot,
     private val material: Material,
     private val parent: Entity,
     private val radius: Float,
@@ -796,6 +893,16 @@ private class DynamicTubeStroke(
             requestMeshUpdate(force = true)
         }
     }
+
+    override fun toSavedSnapshot(): SavedStrokeSnapshot? =
+        sampledPoints
+            .takeIf { it.size >= 2 }
+            ?.let { points ->
+                SavedStrokeSnapshot(
+                    brush = snapshotConfig,
+                    points = points.toList(),
+                )
+            }
 
     override fun dispose() {
         dynamicMeshEntity?.let { strokeRoot.removeChild(it) }
@@ -1001,10 +1108,35 @@ private class DynamicTubeStroke(
         }
         return stableIndex
     }
+
+    companion object {
+        fun restore(
+            strokeName: String,
+            snapshotConfig: DrawingBrushStateSnapshot,
+            material: Material,
+            parent: Entity,
+            radius: Float,
+            points: List<Vector3>,
+        ): DynamicTubeStroke? {
+            if (points.size < 2) return null
+            return DynamicTubeStroke(
+                strokeName = strokeName,
+                snapshotConfig = snapshotConfig,
+                material = material,
+                parent = parent,
+                radius = radius,
+            ).apply {
+                sampledPoints.addAll(points)
+                cumulativeLengths.addAll(computeCumulativeLengths(points))
+                requestMeshUpdate(force = true)
+            }
+        }
+    }
 }
 
 private class SphereStepStroke(
     private val strokeName: String,
+    private val snapshotConfig: DrawingBrushStateSnapshot,
     private val material: Material,
     private val parent: Entity,
     private val radius: Float,
@@ -1012,6 +1144,7 @@ private class SphereStepStroke(
     private val strokeRoot = Entity().apply { setName(strokeName) }
     private val sphereMesh = MeshResource.createSphere(radius)
     private val spheres = mutableListOf<ModelEntity>()
+    private val placedPoints = mutableListOf<Vector3>()
     private var lastSampledPoint: Vector3? = null
     private var distanceSinceLastPlacement = 0f
 
@@ -1064,6 +1197,16 @@ private class SphereStepStroke(
 
     override fun finish() = Unit
 
+    override fun toSavedSnapshot(): SavedStrokeSnapshot? =
+        placedPoints
+            .takeIf { it.isNotEmpty() }
+            ?.let { points ->
+                SavedStrokeSnapshot(
+                    brush = snapshotConfig,
+                    points = points.toList(),
+                )
+            }
+
     override fun dispose() {
         parent.removeChild(strokeRoot)
         sphereMesh.close()
@@ -1079,12 +1222,37 @@ private class SphereStepStroke(
             }
         strokeRoot.addChild(sphere)
         spheres.add(sphere)
+        placedPoints.add(point)
         distanceSinceLastPlacement = 0f
+    }
+
+    companion object {
+        fun restore(
+            strokeName: String,
+            snapshotConfig: DrawingBrushStateSnapshot,
+            material: Material,
+            parent: Entity,
+            radius: Float,
+            points: List<Vector3>,
+        ): SphereStepStroke? {
+            if (points.isEmpty()) return null
+            return SphereStepStroke(
+                strokeName = strokeName,
+                snapshotConfig = snapshotConfig,
+                material = material,
+                parent = parent,
+                radius = radius,
+            ).apply {
+                points.forEach { point -> placeSphere(point) }
+                lastSampledPoint = points.last()
+            }
+        }
     }
 }
 
 private class GrowingSphereStroke(
     private val strokeName: String,
+    private val snapshotConfig: DrawingBrushStateSnapshot,
     private val material: Material,
     private val parent: Entity,
     private val baseRadius: Float,
@@ -1131,6 +1299,15 @@ private class GrowingSphereStroke(
         updateSphereScale()
     }
 
+    override fun toSavedSnapshot(): SavedStrokeSnapshot? =
+        centerPoint?.let { center ->
+            SavedStrokeSnapshot(
+                brush = snapshotConfig,
+                points = listOf(center),
+                growingSphereRadius = currentRadius,
+            )
+        }
+
     override fun dispose() {
         parent.removeChild(strokeRoot)
         sphereMesh.close()
@@ -1148,10 +1325,57 @@ private class GrowingSphereStroke(
                 .setScaleVector(Vector3(currentRadius)),
         )
     }
+
+    private fun applySavedState(
+        center: Vector3,
+        radius: Float,
+    ) {
+        centerPoint = center
+        currentRadius = radius
+        val entity =
+            ModelEntity(sphereMesh, material).apply {
+                setName(strokeName)
+            }
+        strokeRoot.addChild(entity)
+        sphereEntity = entity
+        sphereEntity?.components?.set(
+            TransformComponent()
+                .setPosition(center)
+                .setScaleVector(Vector3(radius)),
+        )
+    }
+
+    companion object {
+        fun restore(
+            strokeName: String,
+            snapshotConfig: DrawingBrushStateSnapshot,
+            material: Material,
+            parent: Entity,
+            baseRadius: Float,
+            centerPoint: Vector3?,
+            finalRadius: Float?,
+        ): GrowingSphereStroke? {
+            val center = centerPoint ?: return null
+            val radius = finalRadius ?: initialGrowingSphereRadius(baseRadius)
+            return GrowingSphereStroke(
+                strokeName = strokeName,
+                snapshotConfig = snapshotConfig,
+                material = material,
+                parent = parent,
+                baseRadius = baseRadius,
+            ).apply {
+                applySavedState(
+                    center = center,
+                    radius = radius.coerceAtLeast(initialGrowingSphereRadius(baseRadius)),
+                )
+            }
+        }
+    }
 }
 
 private class StraightLineStroke(
     private val strokeName: String,
+    private val snapshotConfig: DrawingBrushStateSnapshot,
     private val material: Material,
     private val parent: Entity,
     private val radius: Float,
@@ -1192,6 +1416,18 @@ private class StraightLineStroke(
         rebuildLineMesh()
     }
 
+    override fun toSavedSnapshot(): SavedStrokeSnapshot? {
+        val start = startPoint ?: return null
+        val end = endPoint ?: return null
+        if (Vector3.distance(start, end) < MIN_POINT_SPACING_M) {
+            return null
+        }
+        return SavedStrokeSnapshot(
+            brush = snapshotConfig,
+            points = listOf(start, end),
+        )
+    }
+
     override fun dispose() {
         meshEntity?.let { strokeRoot.removeChild(it) }
         meshEntity = null
@@ -1224,6 +1460,32 @@ private class StraightLineStroke(
             strokeRoot.addChild(meshEntity!!)
         } else {
             existing.replaceWithMeshModel(meshData.model, meshData.bounds)
+        }
+    }
+
+    companion object {
+        fun restore(
+            strokeName: String,
+            snapshotConfig: DrawingBrushStateSnapshot,
+            material: Material,
+            parent: Entity,
+            radius: Float,
+            startPoint: Vector3?,
+            endPoint: Vector3?,
+        ): StraightLineStroke? {
+            val start = startPoint ?: return null
+            val end = endPoint ?: return null
+            return StraightLineStroke(
+                strokeName = strokeName,
+                snapshotConfig = snapshotConfig,
+                material = material,
+                parent = parent,
+                radius = radius,
+            ).apply {
+                this.startPoint = start
+                this.endPoint = end
+                rebuildLineMesh()
+            }
         }
     }
 }

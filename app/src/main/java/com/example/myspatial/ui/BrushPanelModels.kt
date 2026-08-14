@@ -53,6 +53,10 @@ internal sealed interface HandBrushPanelAction {
 
     data object RequestTextureUpload : HandBrushPanelAction
 
+    data object SaveProject : HandBrushPanelAction
+
+    data object OpenProjectBrowser : HandBrushPanelAction
+
     data object Collapse : HandBrushPanelAction
 
     data object Undo : HandBrushPanelAction
@@ -168,6 +172,11 @@ internal enum class HandSide {
     Right,
 }
 
+internal enum class ProjectPanelMode {
+    Save,
+    Open,
+}
+
 internal const val DEFAULT_BRUSH_OPACITY = 1f
 internal const val DEFAULT_BRUSH_RADIUS_M = 0.008f
 internal const val MIN_BRUSH_RADIUS_M = 0.0035f
@@ -179,15 +188,19 @@ internal const val MIN_TEXTURE_CROP_SIZE_RATIO = 0.22f
 internal const val LEFT_CONTROL_PANEL_ATTACHMENT_ID = "left_brush_control_panel"
 internal const val RIGHT_CONTROL_PANEL_ATTACHMENT_ID = "right_brush_control_panel"
 internal const val TEXTURE_PICKER_ATTACHMENT_ID = "texture_picker_panel"
+internal const val PROJECT_BROWSER_ATTACHMENT_ID = "project_browser_panel"
 internal val LEFT_CONTROL_PANEL_POSITION = Vector3(-0.38f, 1.20f, -0.58f)
 internal val RIGHT_CONTROL_PANEL_POSITION = Vector3(0.38f, 1.20f, -0.58f)
 internal val TEXTURE_PICKER_PANEL_POSITION = Vector3(0f, 1.12f, -0.50f)
+internal val PROJECT_BROWSER_PANEL_POSITION = Vector3(0f, 1.10f, -0.52f)
 internal const val CONTROL_PANEL_SCALE = 1.0f
 internal val CONTROL_PANEL_WIDTH_DP = 450.dp
 internal val CONTROL_PANEL_HEIGHT_DP = 1120.dp
 internal val CONTROL_PANEL_SCROLL_CONTENT_HEIGHT_DP = 940.dp
 internal val TEXTURE_PICKER_PANEL_WIDTH_DP = 440.dp
 internal val TEXTURE_PICKER_PANEL_HEIGHT_DP = 560.dp
+internal val PROJECT_BROWSER_PANEL_WIDTH_DP = 460.dp
+internal val PROJECT_BROWSER_PANEL_HEIGHT_DP = 620.dp
 internal val COLLAPSED_PANEL_SIZE_DP = 72.dp
 internal const val COLLAPSED_PANEL_WORLD_SCALE = 0.32f
 internal const val PANEL_TRANSFORM_LERP = 0.22f
