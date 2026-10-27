@@ -11,6 +11,8 @@ import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -32,6 +34,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
+import com.example.myspatial.R
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -106,6 +110,7 @@ internal fun HandBrushPanel(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ExpandedHandBrushPanel(
     state: HandBrushPanelUiState,
@@ -153,71 +158,79 @@ private fun ExpandedHandBrushPanel(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(text = state.title, style = PicoTheme.typography.titleLarge, color = Color.White)
+                Text(
+                    text = state.title,
+                    modifier = Modifier.weight(1f),
+                    style = PicoTheme.typography.titleLarge,
+                    color = Color.White,
+                )
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     Button(onClick = { onAction(HandBrushPanelAction.Undo) }) {
-                        Text(text = "撤销")
+                        Text(text = stringResource(R.string.undo))
                     }
                     Button(onClick = { onAction(HandBrushPanelAction.ClearCanvas) }) {
-                        Text(text = "清空")
+                        Text(text = stringResource(R.string.clear))
                     }
                     Button(onClick = { onAction(HandBrushPanelAction.Collapse) }) {
-                        Text(text = "收起")
+                        Text(text = stringResource(R.string.collapse))
                     }
                 }
             }
             Text(
-                text = "双侧都缩小时，直接 pinch 即可绘画；面板展开时仍需 long pinch。拇指碰小拇指可展开或收起。",
+                text = stringResource(R.string.drawing_gesture_hint),
                 style = PicoTheme.typography.bodyMedium,
                 color = Color.White,
             )
 
-            Text(text = "文件", style = PicoTheme.typography.titleMedium, color = Color.White)
+            Text(text = stringResource(R.string.file), style = PicoTheme.typography.titleMedium, color = Color.White)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 BrushOptionButton(
-                    label = "保存",
+                    label = stringResource(R.string.save),
                     selected = false,
                     onClick = { onAction(HandBrushPanelAction.SaveProject) },
                 )
                 BrushOptionButton(
-                    label = "打开",
+                    label = stringResource(R.string.open),
                     selected = false,
                     onClick = { onAction(HandBrushPanelAction.OpenProjectBrowser) },
                 )
             }
 
-            Text(text = "笔刷", style = PicoTheme.typography.titleMedium, color = Color.White)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(text = stringResource(R.string.brush), style = PicoTheme.typography.titleMedium, color = Color.White)
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                 BrushOptionButton(
-                    label = "动态线",
+                    label = stringResource(R.string.freehand),
                     selected = state.selectedMode == BrushMode.Tube,
                     onClick = { onAction(HandBrushPanelAction.SelectBrushMode(BrushMode.Tube)) },
                 )
                 BrushOptionButton(
-                    label = "圆球虚线",
+                    label = stringResource(R.string.dotted),
                     selected = state.selectedMode == BrushMode.SphereSteps,
                     onClick = { onAction(HandBrushPanelAction.SelectBrushMode(BrushMode.SphereSteps)) },
                 )
                 BrushOptionButton(
-                    label = "圆球",
+                    label = stringResource(R.string.sphere),
                     selected = state.selectedMode == BrushMode.GrowingSphere,
                     onClick = { onAction(HandBrushPanelAction.SelectBrushMode(BrushMode.GrowingSphere)) },
                 )
                 BrushOptionButton(
-                    label = "直线",
+                    label = stringResource(R.string.straight_line),
                     selected = state.selectedMode == BrushMode.StraightLine,
                     onClick = { onAction(HandBrushPanelAction.SelectBrushMode(BrushMode.StraightLine)) },
                 )
             }
 
-            Text(text = "示例", style = PicoTheme.typography.titleMedium, color = Color.White)
+            Text(text = stringResource(R.string.preview), style = PicoTheme.typography.titleMedium, color = Color.White)
             Spacer(modifier = Modifier.height(BRUSH_PREVIEW_PANEL_CLEARANCE_DP))
             BrushSizeControl(
                 radius = state.brushRadius,
                 onRadiusChange = { onAction(HandBrushPanelAction.SetBrushRadius(it)) },
             )
 
-            Text(text = "材质", style = PicoTheme.typography.titleMedium, color = Color.White)
+            Text(text = stringResource(R.string.material), style = PicoTheme.typography.titleMedium, color = Color.White)
             MaterialPresetPicker(
                 selectedMaterial = state.selectedMaterial,
                 previewColor = state.selectedColor.uiColor,
@@ -226,7 +239,7 @@ private fun ExpandedHandBrushPanel(
                 },
             )
             ColorTrackSlider(
-                label = "透明",
+                label = stringResource(R.string.opacity),
                 value = state.opacity,
                 valueText = "${(state.opacity * 100f).roundToInt()}%",
                 knobColor = Color.White,
@@ -235,7 +248,7 @@ private fun ExpandedHandBrushPanel(
                 onValueChange = { onAction(HandBrushPanelAction.SetOpacity(it)) },
             )
 
-            Text(text = "颜色", style = PicoTheme.typography.titleMedium, color = Color.White)
+            Text(text = stringResource(R.string.color), style = PicoTheme.typography.titleMedium, color = Color.White)
             ColorSourcePicker(
                 selectedMode = state.selectedColorMode,
                 textureSelection = state.textureSelection,
@@ -304,7 +317,7 @@ private fun TripleColorTrackPalette(
         horizontalAlignment = Alignment.Start,
     ) {
         ColorTrackSlider(
-            label = "色相",
+            label = stringResource(R.string.hue),
             value = selectedColor.hue / 360f,
             valueText = selectedColor.hue.roundToInt().toString(),
             knobColor = selectedColor.uiColor,
@@ -314,7 +327,7 @@ private fun TripleColorTrackPalette(
             },
         )
         ColorTrackSlider(
-            label = "饱和",
+            label = stringResource(R.string.saturation),
             value = selectedColor.saturation,
             valueText = (selectedColor.saturation * 100f).roundToInt().toString(),
             knobColor = selectedColor.uiColor,
@@ -336,7 +349,7 @@ private fun TripleColorTrackPalette(
             },
         )
         ColorTrackSlider(
-            label = "明度",
+            label = stringResource(R.string.brightness),
             value = selectedColor.value,
             valueText = (selectedColor.value * 100f).roundToInt().toString(),
             knobColor = selectedColor.uiColor,
@@ -620,12 +633,12 @@ private fun ColorSourcePicker(
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             BrushOptionButton(
-                label = "纯色",
+                label = stringResource(R.string.solid_color),
                 selected = selectedMode == BrushColorMode.PureColor,
                 onClick = { onColorModeSelected(BrushColorMode.PureColor) },
             )
             BrushOptionButton(
-                label = "纹理",
+                label = stringResource(R.string.texture),
                 selected = selectedMode == BrushColorMode.Texture,
                 onClick = { onColorModeSelected(BrushColorMode.Texture) },
             )
@@ -660,17 +673,17 @@ private fun TextureCropEditor(
                         .background(fallbackColor.copy(alpha = 0.18f), CircleShape),
                 contentAlignment = Alignment.Center,
             ) {
-                Text(text = "贴图", style = PicoTheme.typography.bodyMedium, color = Color.White.copy(alpha = 0.84f))
+                Text(text = stringResource(R.string.texture_map), style = PicoTheme.typography.bodyMedium, color = Color.White.copy(alpha = 0.84f))
             }
             Column(
                 modifier = Modifier.width(CONTROL_PANEL_WIDTH_DP - TEXTURE_CROP_PREVIEW_SIZE_DP - 48.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Button(onClick = onTextureUploadRequest) {
-                    Text(text = "上传纹理")
+                    Text(text = stringResource(R.string.upload_texture))
                 }
                 Text(
-                    text = "上传后可在弹出面板中裁切",
+                    text = stringResource(R.string.upload_crop_hint),
                     style = PicoTheme.typography.bodyMedium,
                     color = Color.White.copy(alpha = 0.72f),
                 )
@@ -693,10 +706,10 @@ private fun TextureCropEditor(
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Button(onClick = onTextureUploadRequest) {
-                Text(text = "更换图片")
+                Text(text = stringResource(R.string.replace_image))
             }
             Text(
-                text = "裁切请在上传面板中调整",
+                text = stringResource(R.string.edit_crop_hint),
                 style = PicoTheme.typography.bodyMedium,
                 color = Color.White.copy(alpha = 0.76f),
             )
@@ -768,7 +781,7 @@ private fun BrushSizeControl(
         horizontalAlignment = Alignment.Start,
     ) {
         ColorTrackSlider(
-            label = "粗细",
+            label = stringResource(R.string.brush_size),
             value = sliderValue,
             valueText = formatBrushRadiusLabel(radius),
             knobColor = Color.White,

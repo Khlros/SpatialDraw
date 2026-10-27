@@ -222,7 +222,7 @@ internal val HUE_TRACK_COLORS =
         Color.Red,
     )
 internal val COLOR_TRACK_WIDTH_DP = 236.dp
-internal val COLOR_TRACK_LABEL_WIDTH_DP = 40.dp
+internal val COLOR_TRACK_LABEL_WIDTH_DP = 100.dp
 internal val COLOR_TRACK_VALUE_WIDTH_DP = 44.dp
 internal val BRUSH_SIZE_TRACK_WIDTH_DP = 212.dp
 internal val MATERIAL_SWATCH_SIZE_DP = 44.dp

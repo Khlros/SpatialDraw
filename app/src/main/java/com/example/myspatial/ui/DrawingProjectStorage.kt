@@ -11,6 +11,7 @@ import java.io.File
 import java.io.FileOutputStream
 import java.security.MessageDigest
 import java.text.DecimalFormat
+import java.text.DateFormat
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -368,7 +369,7 @@ private fun ZipOutputStream.writeEntry(
 
 internal fun SavedProjectFile.formattedSubtitle(): String {
     val dateText =
-        SimpleDateFormat("MM-dd HH:mm", Locale.US).format(Date(modifiedAtEpochMs))
+        DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(modifiedAtEpochMs))
     val sizeText =
         DecimalFormat("#0.0").format(sizeBytes / 1024f)
     return "$dateText  ${sizeText}KB"

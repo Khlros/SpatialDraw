@@ -5,6 +5,8 @@ import android.content.ContentUris
 import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
+import androidx.compose.ui.res.stringResource
+import com.example.myspatial.R
 import android.graphics.ImageDecoder
 import android.net.Uri
 import android.os.Build
@@ -125,10 +127,10 @@ internal fun TexturePickerAttachmentPanel(
             Text(
                 text =
                     when {
-                        draftSelection != null && handSide == HandSide.Left -> "左手纹理裁切"
-                        draftSelection != null && handSide == HandSide.Right -> "右手纹理裁切"
-                        handSide == HandSide.Left -> "左手纹理图片"
-                        else -> "右手纹理图片"
+                        draftSelection != null && handSide == HandSide.Left -> stringResource(R.string.left_texture_crop)
+                        draftSelection != null && handSide == HandSide.Right -> stringResource(R.string.right_texture_crop)
+                        handSide == HandSide.Left -> stringResource(R.string.left_texture_images)
+                        else -> stringResource(R.string.right_texture_images)
                     },
                 style = PicoTheme.typography.titleLarge,
                 color = Color.White,
@@ -136,11 +138,11 @@ internal fun TexturePickerAttachmentPanel(
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (draftSelection != null) {
                     Button(onClick = { draftSelection = null }) {
-                        Text(text = "返回")
+                        Text(text = stringResource(R.string.back))
                     }
                 }
                 Button(onClick = onDismiss) {
-                    Text(text = "关闭")
+                    Text(text = stringResource(R.string.close))
                 }
             }
         }
@@ -148,8 +150,8 @@ internal fun TexturePickerAttachmentPanel(
         when {
             !permissionGranted && permissionDenied -> {
                 TextureOverlayState(
-                    text = "需要读取照片权限",
-                    actionText = "重新授权",
+                    text = stringResource(R.string.photo_permission_required),
+                    actionText = stringResource(R.string.grant_permission),
                     onAction = {
                         permissionDenied = false
                         permissionLauncher.launch(permission)
@@ -158,22 +160,22 @@ internal fun TexturePickerAttachmentPanel(
             }
             !permissionGranted -> {
                 TextureOverlayState(
-                    text = "正在请求照片权限",
-                    actionText = "关闭",
+                    text = stringResource(R.string.requesting_photo_permission),
+                    actionText = stringResource(R.string.close),
                     onAction = onDismiss,
                 )
             }
             imageItems == null -> {
                 TextureOverlayState(
-                    text = "正在加载照片",
-                    actionText = "关闭",
+                    text = stringResource(R.string.loading_photos),
+                    actionText = stringResource(R.string.close),
                     onAction = onDismiss,
                 )
             }
             imageItems.isNullOrEmpty() -> {
                 TextureOverlayState(
-                    text = "没有读取到照片",
-                    actionText = "关闭",
+                    text = stringResource(R.string.no_photos),
+                    actionText = stringResource(R.string.close),
                     onAction = onDismiss,
                 )
             }
@@ -235,18 +237,18 @@ private fun TextureCropAttachmentEditor(
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(
-                    text = "拖动左上和右下角调整裁切",
+                text = stringResource(R.string.crop_instructions),
                     style = PicoTheme.typography.bodyMedium,
                     color = Color.White.copy(alpha = 0.82f),
                 )
                 Text(
-                    text = "当前 ${cropRect.size}px，最小 ${selection.sourceBitmap.minCropSizePx()}px",
+                text = stringResource(R.string.crop_size, cropRect.size, selection.sourceBitmap.minCropSizePx()),
                     style = PicoTheme.typography.bodyMedium,
                     color = Color.White.copy(alpha = 0.62f),
                 )
             }
             Button(onClick = onConfirm) {
-                Text(text = "使用裁切")
+            Text(text = stringResource(R.string.use_crop))
             }
         }
     }
@@ -582,7 +584,7 @@ private fun TextureImageCard(
                         .background(Color.White.copy(alpha = 0.08f)),
                 contentAlignment = Alignment.Center,
             ) {
-                Text(text = "图片", color = Color.White.copy(alpha = 0.75f))
+            Text(text = stringResource(R.string.image), color = Color.White.copy(alpha = 0.75f))
             }
         }
         Text(
@@ -636,7 +638,7 @@ private fun queryRecentImages(context: Context): List<TextureImageItem> {
         val nameIndex = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DISPLAY_NAME)
         while (cursor.moveToNext() && items.size < 80) {
             val id = cursor.getLong(idIndex)
-            val name = cursor.getString(nameIndex) ?: "未命名图片"
+            val name = cursor.getString(nameIndex) ?: context.getString(R.string.unnamed_image)
             val uri = ContentUris.withAppendedId(collection, id)
             val thumbnail =
                 runCatching {

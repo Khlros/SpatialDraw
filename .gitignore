@@ -10,3 +10,6 @@ build/
 captures/
 .externalNativeBuild/
 .cxx/
+
+signing/
+SpatialDraw-*-release.apk

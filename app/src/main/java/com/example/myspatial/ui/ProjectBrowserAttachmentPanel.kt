@@ -29,6 +29,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
+import com.example.myspatial.R
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -77,16 +79,16 @@ internal fun ProjectBrowserAttachmentPanel(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                text = if (mode == ProjectPanelMode.Save) "保存作品" else "打开作品",
+                text = stringResource(if (mode == ProjectPanelMode.Save) R.string.save_drawing else R.string.open_drawing),
                 style = PicoTheme.typography.titleLarge,
                 color = Color.White,
             )
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Button(onClick = onRefresh) {
-                    Text(text = "刷新")
+                    Text(text = stringResource(R.string.refresh))
                 }
                 Button(onClick = onDismiss) {
-                    Text(text = "关闭")
+                    Text(text = stringResource(R.string.close))
                 }
             }
         }
@@ -101,7 +103,7 @@ internal fun ProjectBrowserAttachmentPanel(
             )
         } else {
             Text(
-                text = "作品保存在应用私有目录里。打开后，之前保存的每一笔都还能继续撤销。",
+                text = stringResource(R.string.drawing_storage_hint),
                 style = PicoTheme.typography.bodyMedium,
                 color = Color.White.copy(alpha = 0.86f),
             )
@@ -126,9 +128,9 @@ internal fun ProjectBrowserAttachmentPanel(
                     Text(
                         text =
                             if (mode == ProjectPanelMode.Save) {
-                                "还没有存档。直接输入路径后点一次“保存”。"
+                                stringResource(R.string.no_drawings_save)
                             } else {
-                                "还没有存档。先在画笔面板里点一次“保存”。"
+                                stringResource(R.string.no_drawings_open)
                             },
                         style = PicoTheme.typography.bodyMedium,
                         color = Color.White.copy(alpha = 0.82f),
@@ -139,7 +141,7 @@ internal fun ProjectBrowserAttachmentPanel(
                     ProjectFileRow(
                         project = project,
                         currentProject = currentProject,
-                        actionLabel = if (mode == ProjectPanelMode.Save) "使用" else "打开",
+                        actionLabel = stringResource(if (mode == ProjectPanelMode.Save) R.string.use else R.string.open),
                         onAction = {
                             if (mode == ProjectPanelMode.Save) {
                                 onUseProjectPath(project)
@@ -174,7 +176,7 @@ private fun SaveProjectSection(
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Text(
-            text = "保存路径（相对 drawings 目录，可写子目录）",
+            text = stringResource(R.string.save_path),
             style = PicoTheme.typography.titleMedium,
             color = Color.White,
         )
@@ -183,20 +185,20 @@ private fun SaveProjectSection(
             onValueChange = onSavePathInputChange,
         )
         Text(
-            text = "例如：room/demo01 或 sketches/0814/test",
+            text = stringResource(R.string.save_path_example),
             style = PicoTheme.typography.bodyMedium,
             color = Color.White.copy(alpha = 0.70f),
         )
         currentProject?.let { project ->
             Text(
-                text = "当前打开：${project.relativePathWithoutExtension}",
+                text = stringResource(R.string.current_drawing, project.relativePathWithoutExtension),
                 style = PicoTheme.typography.bodyMedium,
                 color = Color(0xFF8CC4FF),
             )
         }
         existingSaveTarget?.let { project ->
             Text(
-                text = "将覆盖：${project.relativePath}",
+                text = stringResource(R.string.overwrite_drawing, project.relativePath),
                 style = PicoTheme.typography.bodyMedium,
                 color = Color(0xFFFFD58F),
             )
@@ -205,9 +207,9 @@ private fun SaveProjectSection(
             Text(
                 text =
                     if (existingSaveTarget != null) {
-                        "覆盖保存"
+                        stringResource(R.string.overwrite_save)
                     } else {
-                        "保存到此路径"
+                        stringResource(R.string.save_to_path)
                     },
             )
         }
@@ -237,7 +239,7 @@ private fun ProjectPathInput(
             Box {
                 if (value.isBlank()) {
                     Text(
-                        text = "输入文件名或子目录/文件名",
+                        text = stringResource(R.string.save_path_placeholder),
                         style = PicoTheme.typography.bodyMedium,
                         color = Color.White.copy(alpha = 0.42f),
                     )
@@ -299,7 +301,7 @@ private fun ProjectFileRow(
         ) {
             if (isCurrent) {
                 Text(
-                    text = "当前",
+                    text = stringResource(R.string.current),
                     style = PicoTheme.typography.bodyMedium,
                     color = Color(0xFF8CC4FF),
                 )

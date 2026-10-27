@@ -25,6 +25,8 @@ import androidx.compose.ui.graphics.colorspace.ColorSpaces
 import androidx.compose.ui.input.pointer.PointerId
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
+import com.example.myspatial.R
 import com.pico.spatial.core.container.SpatialViewContent
 import com.pico.spatial.core.ecs.BoundingBox
 import com.pico.spatial.core.ecs.Entity
@@ -112,7 +114,7 @@ fun DrawerHomeScreen(modifier: Modifier = Modifier) {
         }
     val leftPanelUiState =
         HandBrushPanelUiState(
-            title = "左手画笔",
+            title = stringResource(R.string.left_brush),
             collapsed = leftPanelState.collapsed,
             selectedColor = leftSelectedColor,
             brushRadius = leftBrushRadius,
@@ -124,7 +126,7 @@ fun DrawerHomeScreen(modifier: Modifier = Modifier) {
         )
     val rightPanelUiState =
         HandBrushPanelUiState(
-            title = "右手画笔",
+            title = stringResource(R.string.right_brush),
             collapsed = rightPanelState.collapsed,
             selectedColor = rightSelectedColor,
             brushRadius = rightBrushRadius,
@@ -246,7 +248,7 @@ fun DrawerHomeScreen(modifier: Modifier = Modifier) {
         coroutineScope.launch {
             projectNotice =
                 ProjectOperationNotice(
-                    title = "正在保存",
+                    title = context.getString(R.string.saving),
                     detail = normalizedSavePath,
                     busy = true,
                 )
@@ -265,7 +267,7 @@ fun DrawerHomeScreen(modifier: Modifier = Modifier) {
                 projectBrowserVisible = false
                 startProjectNotice(
                     ProjectOperationNotice(
-                        title = "保存完成",
+                        title = context.getString(R.string.saved),
                         detail = savedProject.relativePath,
                         busy = false,
                     ),
@@ -274,8 +276,8 @@ fun DrawerHomeScreen(modifier: Modifier = Modifier) {
             }.onFailure {
                 startProjectNotice(
                     ProjectOperationNotice(
-                        title = "保存失败",
-                        detail = it.message ?: "请检查路径后重试",
+                        title = context.getString(R.string.save_failed),
+                        detail = context.getString(R.string.save_retry),
                         busy = false,
                     ),
                     2200L,
@@ -287,7 +289,7 @@ fun DrawerHomeScreen(modifier: Modifier = Modifier) {
         coroutineScope.launch {
             projectNotice =
                 ProjectOperationNotice(
-                    title = "正在打开",
+                    title = context.getString(R.string.opening),
                     detail = savedProject.relativePath,
                     busy = true,
                 )
@@ -328,7 +330,7 @@ fun DrawerHomeScreen(modifier: Modifier = Modifier) {
                 refreshProjectFiles()
                 startProjectNotice(
                     ProjectOperationNotice(
-                        title = "打开完成",
+                        title = context.getString(R.string.opened),
                         detail = savedProject.relativePath,
                         busy = false,
                     ),
@@ -337,8 +339,8 @@ fun DrawerHomeScreen(modifier: Modifier = Modifier) {
             }.onFailure {
                 startProjectNotice(
                     ProjectOperationNotice(
-                        title = "打开失败",
-                        detail = it.message ?: "请稍后重试",
+                        title = context.getString(R.string.open_failed),
+                        detail = context.getString(R.string.open_retry),
                         busy = false,
                     ),
                     2200L,
